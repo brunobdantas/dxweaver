@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DXWeaver // Operator Console</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body>
+  <div class="scanline"></div>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">DX</div>
+      <div>
+        <div class="eyebrow">FT8 AUTOMATION / UDP TELEMETRY</div>
+        <div class="brand">DXWeaver <span id="version">v0.3.0</span></div>
+      </div>
+    </div>
+    <div class="top-status">
+      <div class="pill neutral" id="radio-link"><span class="dot"></span> MSHV WAITING</div>
+      <div class="pill neutral" id="wrl-link"><span class="dot"></span> WRL ROUTER</div>
+      <div class="utc" id="utc-clock">--:--:-- UTC</div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="control-deck panel">
+      <div class="arm-zone">
+        <button id="arm-button" class="state-button disarmed" data-action="arm">
+          <span class="state-led"></span>
+          <span><strong id="arm-title">DISARMED</strong><small id="arm-subtitle">Monitor / Assist</small></span>
+        </button>
+        <button class="panic" data-action="halt"><span class="panic-icon">■</span><span><strong>HALT TX</strong><small>ABORT + DISARM</small></span></button>
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">OPERATING STRATEGY</div>
+        <div class="segmented" id="strategy-control">
+          <button data-strategy="hunt">HUNT</button>
+          <button data-strategy="answer">ANSWER</button>
+          <button data-strategy="both">BOTH</button>
+        </div>
+      </div>
+
+      <div class="control-group limits-group">
+        <div class="control-label">TX LIMITS</div>
+        <label><span>QSO / H</span><input id="limit-hour" type="number" min="1" max="999" inputmode="numeric"></label>
+        <label><span>SESSION</span><input id="limit-session" type="number" min="1" max="9999" inputmode="numeric"></label>
+        <button id="save-limits" class="compact">APPLY</button>
+      </div>
+
+      <div class="active-target">
+        <span class="control-label">ACTIVE TARGET</span>
+        <strong id="active-call">—</strong>
+        <small id="active-time">IDLE</small>
+      </div>
+    </section>
+
+    <section class="metrics-grid">
+      <article class="metric panel"><span>SESSION QSO</span><strong id="m-session">0</strong><small id="m-hour">0 this hour</small></article>
+      <article class="metric panel"><span>HISTORY</span><strong id="m-history">0</strong><small id="m-entities">0 entities</small></article>
+      <article class="metric panel"><span>DXCC DATA</span><strong id="m-cty">0</strong><small id="m-cty-path">CTY.DAT</small></article>
+      <article class="metric panel"><span>LAST ACTION</span><strong class="metric-text" id="m-action">BOOT</strong><small id="m-cq">CQ window —</small></article>
+    </section>
+
+    <section class="main-grid">
+      <div class="left-column">
+        <article class="panel candidates-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">DECISION PIPELINE</div><h2>Candidates Matrix</h2></div>
+            <div class="cycle-status"><span id="candidate-count">0</span> DECODES <span class="divider">/</span> <span id="selected-call">NO SELECTION</span></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>TYPE</th><th>CALL</th><th>DXCC ENTITY</th><th>SLOT</th><th>STATUS</th><th>SNR</th><th>SCORE</th></tr></thead>
+              <tbody id="candidates-body"></tbody>
+            </table>
+          </div>
+          <div class="empty-state" id="candidate-empty">WAITING FOR FT8 DECODES…</div>
+        </article>
+
+        <article class="panel flow-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">DATAGRAM TELEMETRY</div><h2>UDP / WRL Router</h2></div>
+            <div class="route-address" id="route-address">127.0.0.1:2238 → 127.0.0.1:2239</div>
+          </div>
+          <div class="flow-map">
+            <div class="node"><span class="node-icon">TX</span><strong>MSHV</strong><small id="mshv-packets">0 packets</small></div>
+            <div class="link"><i></i><span>multicast</span></div>
+            <div class="node"><span class="node-icon">GT</span><strong>GridTracker</strong><small>UDP forward</small></div>
+            <div class="link live"><i></i><span id="relay-rate">0 pkt</span></div>
+            <div class="node focus"><span class="node-icon">DX</span><strong>DXWeaver</strong><small>transparent relay</small></div>
+            <div class="link live"><i></i><span>ADIF + WSJT-X</span></div>
+            <div class="node"><span class="node-icon">WRL</span><strong>World Radio League</strong><small id="forwarded-label">0 forwarded</small></div>
+          </div>
+          <div class="router-metrics">
+            <div><span>RX</span><strong id="r-rx">0</strong></div>
+            <div><span>FORWARDED</span><strong id="r-fwd">0</strong></div>
+            <div><span>WSJT-X</span><strong id="r-wsjt">0</strong></div>
+            <div><span>ADIF</span><strong id="r-adif">0</strong></div>
+            <div><span>LATENCY</span><strong id="r-latency">—</strong></div>
+            <div><span>JITTER</span><strong id="r-jitter">—</strong></div>
+          </div>
+          <div class="error-strip hidden" id="relay-error"></div>
+        </article>
+      </div>
+
+      <aside class="right-column">
+        <article class="panel radio-panel">
+          <div class="panel-head"><div><div class="eyebrow">RADIO STATE</div><h2>MSHV / WSJT-X</h2></div><div class="signal-bars"><i></i><i></i><i></i><i></i></div></div>
+          <dl class="kv"><div><dt>INSTANCE</dt><dd id="s-instance">—</dd></div><div><dt>MODE</dt><dd id="s-mode">—</dd></div><div><dt>DIAL</dt><dd id="s-dial">—</dd></div><div><dt>DX CALL</dt><dd id="s-dx">—</dd></div><div><dt>TX STATE</dt><dd id="s-tx">RX</dd></div><div><dt>RX/TX DF</dt><dd id="s-df">—</dd></div></dl>
+        </article>
+
+        <article class="panel sources-panel">
+          <div class="panel-head"><div><div class="eyebrow">DATA INTEGRITY</div><h2>Connected Sources</h2></div></div>
+          <div id="sources-list" class="source-list"></div>
+        </article>
+
+        <article class="panel qso-panel">
+          <div class="panel-head"><div><div class="eyebrow">SESSION LOG</div><h2>Recent QSOs</h2></div></div>
+          <div id="qso-list" class="qso-list"></div>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

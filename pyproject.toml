@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dxweaver"
+version = "0.3.0"
+description = "DXWeaver FT8 automation companion and UDP log router for MSHV/WSJT-X"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "DXWeaver contributors"}]
+dependencies = []
+
+[project.scripts]
+dxweaver = "autoft8.cli:main"
+autoft8 = "autoft8.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+autoft8 = ["web/*.html", "web/*.css", "web/*.js"]

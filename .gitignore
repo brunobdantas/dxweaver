@@ -1,0 +1,63 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+installer-output/
+*.spec
+
+# PyInstaller temporary files
+*.manifest
+
+# Runtime / local state
+*.log
+logs/
+*.pid
+*.tmp
+*.temp
+runtime/
+
+# Radio / log databases and exports (may contain personal QSO data)
+*.hrdsql
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.accdb
+*.adi
+*.adif
+*.bak
+
+# Local/operator configuration
+config.json
+config.local.json
+cty.dat
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets
+.env
+.env.*
+!.env.example

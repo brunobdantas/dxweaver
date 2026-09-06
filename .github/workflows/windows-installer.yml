@@ -1,0 +1,72 @@
+name: Windows Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish/update the v0.3.0 GitHub Release"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dxweaver-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Test and build standalone installer
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DXWeaver-0.3.0-Windows
+          path: |
+            installer-output/DXWeaver-0.3.0-Setup.exe
+            installer-output/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.0
+          target_commitish: ${{ github.sha }}
+          name: DXWeaver v0.3.0
+          body: |
+            DXWeaver v0.3.0 Windows standalone installer.
+
+            Includes the FT8 decision engine, MSHV/WSJT-X UDP integration,
+            GridTracker -> DXWeaver -> WRL transparent UDP/ADIF relay,
+            HRD 6.9 SQLite history, CTY.DAT resolver, and Operator Console dashboard.
+          files: |
+            installer-output/DXWeaver-0.3.0-Setup.exe
+            installer-output/SHA256.txt
+          fail_on_unmatched_files: true
+          overwrite_files: true
