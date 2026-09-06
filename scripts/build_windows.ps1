@@ -2,13 +2,16 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$Version = "0.3.3"
+$Version = "0.3.4"
 Write-Host "== DXWeaver $Version Windows build ==" -ForegroundColor Cyan
 
 python -m pip install --upgrade pip setuptools wheel
+if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE" }
 python -m pip install . pytest pyinstaller
+if ($LASTEXITCODE -ne 0) { throw "dependency install failed with exit code $LASTEXITCODE" }
 $env:PYTHONPATH = "src"
 python -m pytest -q
+if ($LASTEXITCODE -ne 0) { throw "pytest failed with exit code $LASTEXITCODE" }
 
 Remove-Item -Recurse -Force build, dist, installer-output -ErrorAction SilentlyContinue
 python -m PyInstaller --noconfirm --clean --onefile --noconsole `
@@ -16,6 +19,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole `
   --paths src `
   --collect-data autoft8 `
   scripts/dxweaver_launcher.py
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
 # Smoke-test the actual standalone binary before wrapping it in an installer.
 & ".\dist\DXWeaver.exe" --config "config.example.json" --self-test
@@ -44,6 +48,7 @@ if (-not $Iscc) { throw "Inno Setup 6 / ISCC.exe not found" }
 Write-Host "Using Inno Setup compiler: $Iscc" -ForegroundColor Cyan
 
 & $Iscc "installer\DXWeaver.iss"
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 $Setup = "installer-output\DXWeaver-$Version-Setup.exe"
 if (-not (Test-Path $Setup)) { throw "Installer was not produced: $Setup" }
 
