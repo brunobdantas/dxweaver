@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "Publish/update the v0.3.5 GitHub Release"
+        description: "Publish/update the v0.4.0 GitHub Release"
         type: boolean
         default: false
   push:
@@ -45,9 +45,9 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DXWeaver-0.3.5-Windows
+          name: DXWeaver-0.4.0-Windows
           path: |
-            installer-output/DXWeaver-0.3.5-Setup.exe
+            installer-output/DXWeaver-0.4.0-Setup.exe
             installer-output/SHA256.txt
           if-no-files-found: error
           retention-days: 30
@@ -56,26 +56,22 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.5
+          tag_name: v0.4.0
           target_commitish: ${{ github.sha }}
-          name: DXWeaver v0.3.5
+          name: DXWeaver v0.4.0
           body: |
-            DXWeaver v0.3.5 Windows standalone installer.
+            DXWeaver v0.4.0 — native MSHV control architecture.
 
-            On-air QSO state-machine hardening:
-            - direct callers outrank hunt CQs in BOTH/ANSWER;
-            - a direct caller may preempt an unanswered hunt attempt;
-            - once the hunted station replies, the QSO is LOCKED and cannot be stolen mid exchange;
-            - HUNT / ANSWER / BOTH are enforced by the decision engine;
-            - unanswered hunts use a shorter timeout;
-            - explicit calls to our callsign are accepted outside the old post-CQ window by default;
-            - strict CI aborts before packaging/release on any pytest, PyInstaller, self-test, or Inno Setup failure;
-            - Operator Console reports the canonical application version.
+            The live FT8 QSO state machine is no longer reimplemented in Python.
+            - ANSWER is delegated to MSHV Multi Answering Auto Seq Protocol Standard.
+            - HUNT uses DXWeaver scoring only to select the initial CQ; MSHV owns the exchange after selection.
+            - BOTH combines native Multi Answer with scored hunt selection.
+            - ARM has requested vs confirmed states; automatic hunt selection is blocked until the custom MSHV acknowledges AUTO + AutoSeq.
+            - GridTracker/WRL topology remains single-listener: MSHV -> DXWeaver :2237 -> GridTracker :2238 -> DXWeaver relay :2239 -> WRL :2240.
 
-            Single-listener UDP topology remains:
-            MSHV -> DXWeaver :2237 -> GridTracker :2238 -> DXWeaver relay :2239 -> WRL :2240.
+            The companion GPL MSHV-DXWeaver build is produced by the separate native-MSHV workflow from the pinned official MSHV source.
           files: |
-            installer-output/DXWeaver-0.3.5-Setup.exe
+            installer-output/DXWeaver-0.4.0-Setup.exe
             installer-output/SHA256.txt
           fail_on_unmatched_files: true
           overwrite_files: true
