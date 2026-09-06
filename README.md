@@ -1,197 +1,141 @@
-# DXWeaver 0.3
+# DXWeaver 0.4.0
 
-**FT8 automation + UDP log routing for MSHV / WSJT-X / GridTracker / World Radio League.**
+**FT8 decision automation + native MSHV control + UDP routing for GridTracker / WRL.**
 
-DXWeaver is the new product name for the project previously called Auto FT8 Manager.
-The internal Python package remains `autoft8` for compatibility, but the executable,
-installer, dashboard and command are now **DXWeaver**.
+DXWeaver is the external decision and integration layer. The companion **MSHV-DXWeaver** build remains the radio application and owns the live FT8 QSO state machine.
 
-DXWeaver does not automate the mouse or scrape the screen. It uses the native
-WSJT-X-compatible UDP protocol implemented by MSHV/WSJT-X, ranks FT8 decodes,
-can send the standard `Reply` command, watches logged QSOs, reads HRD/ADIF
-history, and now also works as a transparent UDP router toward WRL.
+DXWeaver does not automate the mouse or scrape the screen. It uses the WSJT-X-compatible UDP protocol implemented by MSHV, adds a small trailing-field extension understood by the companion MSHV-DXWeaver build, ranks FT8 decodes, reads log history, routes UDP traffic and only selects the initial target when appropriate.
 
-## Recommended station topology
+## 0.4.0 architecture
 
-For the user's existing setup, keep HRD logging independent and route WRL through
-DXWeaver:
+- **ANSWER** — delegated to MSHV Multi Answering Auto Seq Protocol Standard.
+- **HUNT** — DXWeaver ranks CQ decodes and selects the initial target; MSHV owns the exchange after selection.
+- **BOTH** — combines native MSHV answering with DXWeaver hunt selection.
+- **Fail-closed ARM** — HUNT selection is blocked until MSHV-DXWeaver reports the actual applied AUTO + AutoSeq + Multi Answer state.
+- **No UI click automation** — control is native UDP.
 
-```text
-MSHV  ───────────────────────────────► Ham Radio Deluxe Logbook
-  │
-  │ WSJT-X compatible UDP
-  ▼
-GridTracker ───── UDP 2238 ─────► DXWeaver ───── UDP 2239 ─────► WRL Desktop / Integrations App
-                                   │
-                                   ├─ forwards WSJT-X messages unchanged
-                                   └─ forwards plain ADIF UDP unchanged
-```
+The custom MSHV extension is backwards-compatible at the wire level: DXWeaver appends three booleans to standard schema-3 Configure/Status messages. Ordinary implementations ignore trailing fields; MSHV-DXWeaver consumes them.
 
-### Full automation + GridTracker
-
-GridTracker's ordinary Forward UDP path is one-way, so it should not be relied
-upon to return a DXWeaver `Reply` command to MSHV. For **Auto Call** while keeping
-GridTracker in the chain, use a direct/multicast control feed as well:
+## Recommended PU2BRU topology
 
 ```text
-                         ┌──────────────► GridTracker ──► DXWeaver relay ──► WRL
-MSHV ── 239.255.0.1:2237 ┤
-                         └──────────────► DXWeaver automation engine
-                                               │
-                                               └──── direct UDP Reply ─────► MSHV
+MSHV-DXWeaver
+    |
+    | WSJT-X compatible UDP -> 127.0.0.1:2237
+    v
+DXWeaver
+    |
+    +----> GridTracker 127.0.0.1:2238
+                     |
+                     | Forward UDP -> 127.0.0.1:2239
+                     v
+               DXWeaver Relay
+                     |
+                     +----> WRL 127.0.0.1:2240
+
+Ham Radio Deluxe Logbook remains an independent logging path.
 ```
 
-This keeps the logging path exactly as desired while preserving reliable
-bidirectional automation control.
+Default config is supplied in `config.pu2bru-wrl.json`.
 
-## WRL UDP router (new in 0.3)
+## Native safety handshake
 
-DXWeaver has a second UDP ingress dedicated to the GridTracker -> WRL path.
-It classifies each datagram as:
+When ARM or the operating strategy changes, DXWeaver requests native states from MSHV-DXWeaver. MSHV applies those values, reads back its actual internal state and only then sends Status acknowledgement.
 
-- canonical WSJT-X/MSHV message (`0xADBCCBDA`);
-- plain ADIF UDP broadcast (`<CALL:...> ... <EOR>`);
-- unknown.
+DXWeaver compares requested versus reported values and refuses automatic HUNT selection while native confirmation is missing. The default configuration also keeps `allow_unconfirmed_native_control` disabled.
 
-WSJT-X messages and ADIF are forwarded **byte-for-byte unchanged** by default.
-Unknown traffic is dropped unless explicitly enabled.
+## Ranking and history
 
-Default router settings:
+DXWeaver can use:
 
-```json
-"relay_enabled": true,
-"relay_listen_host": "127.0.0.1",
-"relay_listen_port": 2238,
-"wrl_forward_host": "127.0.0.1",
-"wrl_forward_port": 2239,
-"relay_forward_wsjt": true,
-"relay_forward_adif": true,
-"relay_forward_unknown": false
-```
+- ADIF history;
+- Ham Radio Deluxe 6.9 SQLite history, read-only;
+- CTY.DAT DXCC/entity data;
+- worked call/band/mode/slot/grid history;
+- watchlist / exclusions;
+- SNR and confidence;
+- cooldowns and hourly/session limits.
 
-Configure:
+## WRL / GridTracker UDP router
 
-1. **GridTracker** Forward UDP Messages -> `127.0.0.1:2238`.
-2. If using GridTracker's logging output / HRD Logbook target for WRL, point that
-   ADIF UDP output to `127.0.0.1:2238` as well.
-3. **WRL Desktop / Integrations App** -> WSJT-X UDP Listener port `2239`.
-4. Start DXWeaver.
+The relay classifies incoming traffic as canonical WSJT-X/MSHV, plain ADIF, or unknown. WSJT-X and ADIF traffic are forwarded unchanged by default; unknown datagrams are dropped.
 
-The dashboard shows received/forwarded totals and separate WSJT-X/ADIF counters.
-
-## Existing automation capabilities
-
-- Native MSHV / WSJT-X UDP control.
-- Monitor / Assist / Auto safety levels.
-- Hunt & Pounce candidate selection.
-- Automatic selection among stations answering your CQ.
-- History-aware ranking using ADIF and Ham Radio Deluxe 6.9 SQLite.
-- DXCC/entity ranking using CTY.DAT.
-- New DXCC/entity, band, mode, slot, grid, unconfirmed-slot and SNR weighting.
-- Watchlist / blacklist / prefix filters.
-- QSO timeout, HaltTx, cooldowns, hourly/session limits.
-- Local dashboard with ARM / DISARM / HALT TX.
-- Multicast reception for sharing a single MSHV/WSJT-X stream with GridTracker.
-
-## HRD logging
-
-DXWeaver does **not** replace or intercept your existing MSHV -> Ham Radio Deluxe
-Logbook path. Keep it exactly as it already works. DXWeaver opens HRD 6.9 SQLite
-files read-only when using them as history for ranking.
-
-## Windows installer
-
-The GitHub workflow builds a single end-user installer:
+Default ports:
 
 ```text
-DXWeaver-0.3.0-Setup.exe
+MSHV-DXWeaver -> DXWeaver automation listener :2237
+DXWeaver -> GridTracker                       :2238
+GridTracker -> DXWeaver relay                 :2239
+DXWeaver relay -> WRL                         :2240
 ```
 
-It is a per-user install and does not require Python to be installed. It installs:
+## Windows installation
 
-- the self-contained `DXWeaver.exe` generated by PyInstaller;
-- a default config under `%APPDATA%\DXWeaver\config.json`;
-- Start Menu shortcut;
-- optional Desktop and Windows-startup shortcuts.
+Two installers are produced:
 
-For development, `INSTALL_DEV_WINDOWS.bat` can install from source when Python is
-already present.
-
-## Build locally on Windows
-
-```bat
-build_windows.bat
+```text
+MSHV-DXWeaver-0.4.0-Setup.exe
+DXWeaver-0.4.0-Setup.exe
 ```
 
-To build the final setup executable locally, install Inno Setup 6 and run
-`installer\DXWeaver.iss` after PyInstaller finishes.
+Install **MSHV-DXWeaver first**, configure station identity/audio/CAT/PTT and its UDP destination as `127.0.0.1:2237`, then install DXWeaver.
 
-## Dashboard
+DXWeaver is a per-user install and does not require Python. Its user configuration is stored at:
 
-Default URL:
+```text
+%APPDATA%\DXWeaver\config.json
+```
+
+The local operator console is:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-The WRL Router card shows:
+The default mode is **ASSIST / unarmed**. Verify native capability and confirmation in the dashboard before using ARM.
 
-- source listener;
-- WRL destination;
-- total datagrams received;
-- total forwarded;
-- WSJT-X count;
-- ADIF count;
-- latest forwarding error, if any.
+## Dashboard
 
-## Tests
+The local dashboard provides:
 
-Run:
+- ARMED / DISARMED state;
+- native requested versus confirmed MSHV state;
+- HUNT / ANSWER / BOTH strategy;
+- candidate ranking and selected target;
+- current MSHV radio status;
+- hourly/session limits;
+- QSO/history information;
+- GridTracker / WRL relay counters;
+- HALT TX control.
+
+## Build and test
+
+Python test suite:
 
 ```bash
 PYTHONPATH=src pytest -q
 ```
 
-The test suite includes a real UDP socket test that verifies both a WSJT-X
-packet and a plain ADIF record are forwarded unchanged.
+Windows DXWeaver installer:
 
-## Product naming
+```powershell
+./scripts/build_windows.ps1
+```
 
-**DXWeaver** is the working product name. It reflects the role the program is
-becoming: weaving together the FT8 application, decision engine, GridTracker,
-HRD/history and online logbooks rather than being just another "AutoFT8" tool.
+The MSHV-DXWeaver workflow clones the official MSHV source pinned to commit:
 
-## Operating note
+```text
+8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
+```
 
-Automatic transmission remains under the licensed operator's responsibility.
-Configure station identity, band plan, power, operating limits and local
-regulations before arming automation.
+It applies the asserted native-control patch, builds with Qt 5.15.2 / MinGW, stages the required runtime, launches the packaged executable for a Windows loader smoke test, and builds the Inno Setup installer.
 
-## Operator Console (v0.3.0)
+## Licensing
 
-The local dashboard at `http://127.0.0.1:8787` is a zero-cloud, offline-capable
-operator cockpit. Static assets are packaged inside the executable and live in
-`src/autoft8/web/`.
+DXWeaver's own code is MIT licensed.
 
-Highlights:
+MSHV-DXWeaver is a derivative of MSHV and is distributed under GPL-3.0. The CI produces the corresponding patch/source materials alongside the runtime build for license compliance.
 
-- Server-Sent Events (SSE), 500 ms state cadence; no page reloads.
-- Prominent ARMED/DISARMED state and HALT TX panic control.
-- Runtime Hunt / Answer / Both strategy selection.
-- Runtime QSO/hour and session TX limits.
-- Current-cycle candidate matrix with selected-target highlighting.
-- MSHV/WSJT-X radio state and direct UDP packet telemetry.
-- GridTracker -> DXWeaver -> WRL relay counters, forwarding latency and jitter.
-- HRD/ADIF/CTY source health plus session QSO log.
+## Operating responsibility
 
-## Windows CI/CD
-
-`scripts/build_windows.ps1` runs tests, produces the one-file `DXWeaver.exe`
-with PyInstaller, and compiles `installer/DXWeaver.iss` with Inno Setup 6.
-
-`.github/workflows/windows-installer.yml` executes that script on
-`windows-latest`, uploads `DXWeaver-0.3.0-Setup.exe` + `SHA256.txt` as an
-artifact, and can publish the `v0.3.0` Release when manually dispatched with
-`publish_release=true`.
-
-See `docs/GITHUB_BOOTSTRAP.md` for the exact local Git commands.
+Automatic RF transmission remains under the licensed operator's responsibility. Validate callsign, band/frequency, power, CAT/PTT, audio levels, station limits and applicable regulations before arming automation.
