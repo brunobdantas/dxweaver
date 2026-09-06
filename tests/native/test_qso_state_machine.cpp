@@ -9,6 +9,10 @@ bool has(const std::vector<Action>& a, ActionType t, const std::string& call = {
     for (const auto& x : a) if (x.type == t && (call.empty() || x.call == call)) return true;
     return false;
 }
+int indexOf(const std::vector<Action>& a, ActionType t) {
+    for (std::size_t i = 0; i < a.size(); ++i) if (a[i].type == t) return static_cast<int>(i);
+    return -1;
+}
 }
 
 TEST(QsoStateMachine, DirectedCallerPreemptsUnansweredHuntAndLocksCaller) {
@@ -49,8 +53,9 @@ TEST(QsoStateMachine, BusyHuntTargetAbortsAndSelectsRunnerUp) {
     QsoStateMachine sm("PU2BRU");
     sm.arm(Strategy::Hunt);
     sm.startHunt(c("9Y4C"));
+    Candidate next = c("IZ0DHC");
 
-    auto actions = sm.onTargetAnswersThirdParty("9Y4C", "KK4CDK", c("IZ0DHC"));
+    auto actions = sm.onTargetAnswersThirdParty("9Y4C", "KK4CDK", &next);
     EXPECT_TRUE(has(actions, ActionType::HaltTx, "9Y4C"));
     EXPECT_TRUE(has(actions, ActionType::ApplyCooldown, "9Y4C"));
     EXPECT_TRUE(has(actions, ActionType::SelectTarget, "IZ0DHC"));
@@ -84,4 +89,13 @@ TEST(QsoStateMachine, QsoCompletesOnlyForActiveTarget) {
     EXPECT_TRUE(has(actions, ActionType::ClearTarget, "9Y4C"));
     EXPECT_EQ(sm.state(), QsoState::Idle);
     EXPECT_TRUE(sm.activeCall().empty());
+}
+
+TEST(QsoStateMachine, NativeAutoIsEnsuredBeforeTargetSelection) {
+    QsoStateMachine sm("PU2BRU");
+    sm.arm(Strategy::Hunt);
+    const auto actions = sm.startHunt(c("9Y4C"));
+    ASSERT_GE(indexOf(actions, ActionType::EnsureAuto), 0);
+    ASSERT_GE(indexOf(actions, ActionType::SelectTarget), 0);
+    EXPECT_LT(indexOf(actions, ActionType::EnsureAuto), indexOf(actions, ActionType::SelectTarget));
 }
