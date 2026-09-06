@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$Version = "0.4.0"
+$Version = "0.4.1"
 Write-Host "== DXWeaver $Version Windows build ==" -ForegroundColor Cyan
 
 python -m pip install --upgrade pip setuptools wheel
