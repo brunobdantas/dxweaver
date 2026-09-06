@@ -71,10 +71,6 @@ jobs:
           $make = (Get-Command mingw32-make.exe -ErrorAction Stop).Source
           "qmake=$qmake" >> $env:GITHUB_OUTPUT
           "make=$make" >> $env:GITHUB_OUTPUT
-          Write-Host "qmake=$qmake"
-          Write-Host "make=$make"
-          Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
-          Write-Host "QT_PLUGIN_PATH=$env:QT_PLUGIN_PATH"
 
       - name: Build MSHV-DXWeaver x64
         shell: pwsh
@@ -141,10 +137,10 @@ jobs:
           Copy-Item "mshv-upstream/COPYING.txt" "mshv-package/COPYING-MSHV-GPL3.txt" -Force
           Copy-Item "mshv/apply_dxweaver_patch.py" "mshv-package/DXWeaver-MSHV-Patch-Source.py" -Force
           Copy-Item "mshv/apply_dxweaver_runtime_fix.py" "mshv-package/DXWeaver-MSHV-Runtime-Fix-Source.py" -Force
-          cmd /c "git -C mshv-upstream diff --binary > mshv-package\DXWeaver-MSHV-0.4.0.patch"
+          cmd /c "git -C mshv-upstream diff --binary > mshv-package\DXWeaver-MSHV-0.4.1.patch"
           if ($LASTEXITCODE -ne 0) { throw "failed to export MSHV patch" }
           @"
-          MSHV-DXWeaver 0.4.0 hotfix build
+          MSHV-DXWeaver 0.4.1
           Official MSHV upstream: https://github.com/LZ2HV/MSHV
           Upstream commit: 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
           DXWeaver repository: https://github.com/brunobdantas/dxweaver
@@ -152,15 +148,15 @@ jobs:
           "@ | Set-Content "mshv-package/UPSTREAM-DXWEAVER.txt" -Encoding UTF8
 
           git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" add -u
-          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" commit -m "DXWeaver 0.4.0 native control hotfix"
+          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" commit -m "DXWeaver 0.4.1 native profile transition fix"
           if ($LASTEXITCODE -ne 0) { throw "failed to commit patched source" }
-          git -C mshv-upstream archive --format=zip --output="$PWD/MSHV-DXWeaver-0.4.0-Source.zip" HEAD
+          git -C mshv-upstream archive --format=zip --output="$PWD/MSHV-DXWeaver-0.4.1-Source.zip" HEAD
           if ($LASTEXITCODE -ne 0) { throw "source archive failed" }
 
       - name: Create portable Windows archive
         shell: pwsh
         run: |
-          tar.exe -a -c -f "MSHV-DXWeaver-0.4.0-Windows.zip" -C "mshv-package" .
+          tar.exe -a -c -f "MSHV-DXWeaver-0.4.1-Windows.zip" -C "mshv-package" .
           if ($LASTEXITCODE -ne 0) { throw "portable ZIP creation failed" }
 
       - name: Install Inno Setup
@@ -184,23 +180,23 @@ jobs:
           New-Item -ItemType Directory -Force "installer-output-mshv" | Out-Null
           & $iscc "installer/MSHV-DXWeaver.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
-          $setup = "installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe"
+          $setup = "installer-output-mshv/MSHV-DXWeaver-0.4.1-Setup.exe"
           if (-not (Test-Path $setup)) { throw "installer missing" }
-          $files = @("MSHV-DXWeaver-0.4.0-Windows.zip","MSHV-DXWeaver-0.4.0-Source.zip",$setup)
+          $files = @("MSHV-DXWeaver-0.4.1-Windows.zip","MSHV-DXWeaver-0.4.1-Source.zip",$setup)
           $lines = foreach ($file in $files) {
             $h = Get-FileHash $file -Algorithm SHA256
             "$($h.Hash)  $([System.IO.Path]::GetFileName($file))"
           }
-          $lines | Set-Content "MSHV-DXWeaver-0.4.0-SHA256.txt" -Encoding ascii
+          $lines | Set-Content "MSHV-DXWeaver-0.4.1-SHA256.txt" -Encoding ascii
 
       - name: Upload native MSHV installable package
         uses: actions/upload-artifact@v4
         with:
-          name: MSHV-DXWeaver-0.4.0-Windows-Installable
+          name: MSHV-DXWeaver-0.4.1-Windows-Installable
           path: |
-            installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe
-            MSHV-DXWeaver-0.4.0-Windows.zip
-            MSHV-DXWeaver-0.4.0-Source.zip
-            MSHV-DXWeaver-0.4.0-SHA256.txt
+            installer-output-mshv/MSHV-DXWeaver-0.4.1-Setup.exe
+            MSHV-DXWeaver-0.4.1-Windows.zip
+            MSHV-DXWeaver-0.4.1-Source.zip
+            MSHV-DXWeaver-0.4.1-SHA256.txt
           if-no-files-found: error
           retention-days: 30
