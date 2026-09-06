@@ -8,7 +8,7 @@ namespace dxw {
 
 class QsoStateMachine final {
 public:
-    explicit QsoStateMachine(std::string myCall);
+    explicit QsoStateMachine(std::string myCall, std::string myGrid = std::string());
 
     QsoState state() const noexcept { return state_; }
     Strategy strategy() const noexcept { return strategy_; }
@@ -16,10 +16,13 @@ public:
     bool engaged() const noexcept { return engaged_; }
     const std::string& activeCall() const noexcept { return activeCall_; }
     TargetKind activeKind() const noexcept { return activeKind_; }
+    const std::string& myCall() const noexcept { return myCall_; }
+    const std::string& myGrid() const noexcept { return myGrid_; }
 
     std::vector<Action> arm(Strategy strategy);
     std::vector<Action> disarm(std::string reason = "operator disarm");
     std::vector<Action> halt(std::string reason = "operator HALT TX");
+    std::vector<Action> updateStationIdentity(std::string myCall, std::string myGrid);
 
     std::vector<Action> startHunt(const Candidate& candidate);
     std::vector<Action> onDirectedCaller(const Candidate& caller);
@@ -38,6 +41,7 @@ private:
     bool allowsAnswer() const noexcept;
 
     std::string myCall_;
+    std::string myGrid_;
     Strategy strategy_{Strategy::Both};
     QsoState state_{QsoState::Disarmed};
     bool armed_{false};
