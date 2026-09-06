@@ -1,7 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 let lastState=null,eventSource=null,reconnectTimer=null;
-const esc=x=>String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const esc=x=>String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));
 const fmt=n=>Number(n||0).toLocaleString('en-US');
 const hz=v=>{const n=Number(v||0);return n?`${(n/1e6).toFixed(6)} MHz`:'—'};
 const onoff=v=>v?'ON':'OFF';
@@ -14,26 +14,27 @@ function renderQsos(d){const rows=(d.qso_log||[]).slice().reverse().slice(0,10);
 function renderNative(d){
  const n=d.native_control||{},req=n.requested||{},rep=n.reported||{},native=d.control_backend==='mshv_native';
  const capable=!!n.capable,confirmed=!!n.confirmed,armed=!!d.armed,ab=$('arm-button');
+ const phase=(n.phase||'answer').toUpperCase(),phaseLabel=n.phase_label||`${phase} READY`;
  ab.classList.remove('armed','disarmed','requested');
  if(!armed)ab.classList.add('disarmed');else if(confirmed)ab.classList.add('armed');else ab.classList.add('requested');
  $('arm-title').textContent=!armed?'DISARMED':confirmed?'ARMED / CONFIRMED':'ARM REQUESTED';
- $('arm-subtitle').textContent=!armed?'Monitor / Assist':confirmed?'MSHV Native Auto Active':'Waiting for MSHV acknowledgement';
+ $('arm-subtitle').textContent=!armed?'Monitor / Assist':confirmed?`MSHV ${phaseLabel}`:`Waiting for MSHV ${phaseLabel}`;
  const nl=$('native-link');
  if(!native){nl.className='pill neutral';nl.innerHTML='<span class="dot"></span>LEGACY UDP';}
- else if(confirmed){nl.className='pill ok';nl.innerHTML='<span class="dot"></span>NATIVE CONFIRMED';}
- else if(capable){nl.className='pill warn';nl.innerHTML='<span class="dot"></span>NATIVE PENDING';}
+ else if(confirmed){nl.className='pill ok';nl.innerHTML=`<span class="dot"></span>${esc(phaseLabel)} CONFIRMED`;}
+ else if(capable){nl.className='pill warn';nl.innerHTML=`<span class="dot"></span>${esc(phaseLabel)} PENDING`;}
  else{nl.className='pill error';nl.innerHTML='<span class="dot"></span>NATIVE NOT DETECTED';}
  $('n-capable').textContent=capable?'DETECTED':'NOT DETECTED';$('n-capable').className=capable?'ack-ok':'ack-bad';
  $('n-auto').textContent=`REQ ${onoff(req.auto_enabled)} / ACK ${onoff(rep.auto_enabled)}`;
- $('n-aseq').textContent=`REQ ${onoff(req.auto_seq)} / ACK ${onoff(rep.auto_seq)}`;
+ $('n-aseq').textContent=req.multi_answer_std&&!req.auto_seq?'N/A — MA STANDARD OWNS SEQUENCE':`REQ ${onoff(req.auto_seq)} / ACK ${onoff(rep.auto_seq)}`;
  $('n-mastd').textContent=`REQ ${onoff(req.multi_answer_std)} / ACK ${onoff(rep.multi_answer_std)}`;
  ['n-auto','n-aseq','n-mastd'].forEach((id,i)=>{const keys=['auto_enabled','auto_seq','multi_answer_std'];$(id).className=req[keys[i]]===rep[keys[i]]&&capable?'ack-ok':'ack-warn'});
- if(native){$('active-call').textContent='MSHV NATIVE';$('active-time').textContent=confirmed?'CONTROL ACKNOWLEDGED':armed?'WAITING FOR ACK':'IDLE / DISARMED';}
- return {native,capable,confirmed,armed};
+ if(native){$('active-call').textContent='MSHV NATIVE';$('active-time').textContent=confirmed?`${phaseLabel} / ACKNOWLEDGED`:armed?`${phaseLabel} / WAITING FOR ACK`:'IDLE / DISARMED';}
+ return {native,capable,confirmed,armed,phaseLabel};
 }
-function render(d){lastState=d;$('version').textContent='v'+(d.version||'0.4.0');const ns=renderNative(d);
+function render(d){lastState=d;$('version').textContent='v'+(d.version||'0.4.1');const ns=renderNative(d);
  if(!ns.native){const armed=!!d.armed,ab=$('arm-button');ab.classList.toggle('armed',armed);ab.classList.toggle('disarmed',!armed);$('arm-title').textContent=armed?'ARMED':'DISARMED';$('arm-subtitle').textContent=armed?'Legacy UDP Auto':'Monitor / Assist';$('active-call').textContent=d.active_call||'—';$('active-time').textContent=d.active_call?`${Number(d.active_for||0).toFixed(1)}s • ${(d.active_kind||'QSO').toUpperCase()}`:'IDLE';}
- $('m-session').textContent=fmt(d.session_qsos);$('m-hour').textContent=`${fmt(d.hour_qsos)} / ${fmt(d.limits?.per_hour)} this hour`;$('m-history').textContent=fmt(d.history_qsos);$('m-entities').textContent=`${fmt(d.history_entities)} entities`;$('m-cty').textContent=fmt(d.cty_entities);$('m-cty-path').textContent=(d.cty_path||'CTY.DAT').split(/[\\/]/).pop();$('m-action').textContent=d.last_action||'IDLE';$('m-cq').textContent=ns.native?`Backend: MSHV native${ns.confirmed?' / confirmed':''}`:(d.last_cq_age==null?'CQ window —':`Last CQ ${d.last_cq_age}s ago`);
+ $('m-session').textContent=fmt(d.session_qsos);$('m-hour').textContent=`${fmt(d.hour_qsos)} / ${fmt(d.limits?.per_hour)} this hour`;$('m-history').textContent=fmt(d.history_qsos);$('m-entities').textContent=`${fmt(d.history_entities)} entities`;$('m-cty').textContent=fmt(d.cty_entities);$('m-cty-path').textContent=(d.cty_path||'CTY.DAT').split(/[\\/]/).pop();$('m-action').textContent=d.last_action||'IDLE';$('m-cq').textContent=ns.native?`Backend: MSHV native${ns.confirmed?` / ${ns.phaseLabel}`:''}`:(d.last_cq_age==null?'CQ window —':`Last CQ ${d.last_cq_age}s ago`);
  document.querySelectorAll('[data-strategy]').forEach(b=>b.classList.toggle('active',b.dataset.strategy===d.operating_strategy));if(document.activeElement!==$('limit-hour'))$('limit-hour').value=d.limits?.per_hour??20;if(document.activeElement!==$('limit-session'))$('limit-session').value=d.limits?.per_session??200;
  const s=d.status||{},linked=!!d.instance;$('radio-link').className='pill '+(linked?'ok':'neutral');$('radio-link').innerHTML=`<span class="dot"></span>${linked?'MSHV LINKED':'MSHV WAITING'}`;$('s-instance').textContent=d.instance||'—';$('s-mode').textContent=s.mode||'—';$('s-dial').textContent=hz(s.dial_frequency);$('s-dx').textContent=s.dx_call||'—';$('s-tx').textContent=s.transmitting?'TX':s.tx_enabled?'AUTO / RX':'RX';$('s-tx').style.color=s.transmitting?'var(--red)':s.tx_enabled?'var(--amber)':'var(--green)';$('s-df').textContent=(s.rx_df!=null||s.tx_df!=null)?`${s.rx_df??'—'} / ${s.tx_df??'—'} Hz`:'—';
  const t=d.transport||{};$('mshv-packets').textContent=`${fmt(t.received)} packets`;const r=d.relay||{};$('wrl-link').className='pill '+(r.enabled===false?'neutral':r.last_error?'error':'ok');$('wrl-link').innerHTML=`<span class="dot"></span>${r.enabled===false?'WRL DISABLED':r.last_error?'WRL ERROR':'WRL ROUTER OK'}`;$('route-address').textContent=`${r.listen||'—'} → ${r.forward||'—'}`;$('r-rx').textContent=fmt(r.received);$('r-fwd').textContent=fmt(r.forwarded);$('r-wsjt').textContent=fmt(r.wsjt);$('r-adif').textContent=fmt(r.adif);$('r-latency').textContent=r.latency_ms_avg!=null?`${Number(r.latency_ms_avg).toFixed(2)} ms`:'—';$('r-jitter').textContent=r.jitter_ms!=null?`${Number(r.jitter_ms).toFixed(2)} ms`:'—';$('relay-rate').textContent=`${fmt(r.received)} pkt`;$('forwarded-label').textContent=`${fmt(r.forwarded)} forwarded`;const er=$('relay-error');er.textContent=r.last_error||d.last_error||'';er.classList.toggle('hidden',!er.textContent);renderCandidates(d);renderSources(d);renderQsos(d)}
