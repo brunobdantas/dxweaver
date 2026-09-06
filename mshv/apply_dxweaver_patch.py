@@ -60,7 +60,6 @@ def apply(root: Path) -> None:
     main_cpp = root / "src/main_ms.cpp"
     pro = root / "MSHV_WIN64.pro"
 
-    # Separate executable so stock MSHV can coexist with the DXWeaver build.
     replace_once(
         pro,
         "CONFIG += release warn_on exceptions_off\n",
@@ -68,7 +67,6 @@ def apply(root: Path) -> None:
         "separate executable target",
     )
 
-    # Extend Status with an explicit DXWeaver extension marker plus native-state acks.
     replace_once(
         msg_h,
         "\t\t\t\tbool,QString);\n",
@@ -88,8 +86,6 @@ def apply(root: Path) -> None:
         "Status native acknowledgement tail",
     )
 
-    # Configure: keep the standard WSJT-X-compatible payload and consume three
-    # optional trailing booleans only when a DXWeaver sender appended them.
     old_config_parse = """                bool generate_messages {false};
                 in >> mode >> frequency_tolerance >> submode >> fast_mode >> tr_period >> rx_df
                 >> dx_call >> dx_grid >> generate_messages;
@@ -111,7 +107,6 @@ def apply(root: Path) -> None:
 """
     replace_once(msg_cpp, old_config_parse, new_config_parse, "Configure extension parser")
 
-    # Insert before the existing emit rather than matching trailing whitespace.
     config_emit_anchor = "                    Q_EMIT self_->configure(list);//,generate_messages);"
     config_emit_replacement = """                    if (dxw_extension_present)
                     {
@@ -119,14 +114,8 @@ def apply(root: Path) -> None:
                             <<QString::number(dxw_auto_seq)<<QString::number(dxw_multi_answer_std);
                     }
                     Q_EMIT self_->configure(list);//,generate_messages);"""
-    replace_once(
-        msg_cpp,
-        config_emit_anchor,
-        config_emit_replacement,
-        "Configure extension signal payload",
-    )
+    replace_once(msg_cpp, config_emit_anchor, config_emit_replacement, "Configure extension signal payload")
 
-    # Radio/network layer stores requested native state and acknowledges it in Status.
     replace_once(
         net_h,
         "    void EmitUdpConfigure(int);//2.76.7\n",
@@ -169,7 +158,6 @@ void RadioAndNetW::set_halt_tx(bool f)
 """
     replace_once(net_cpp, old_config_tail, new_config_tail, "RadioAndNetW Configure native dispatch")
 
-    # AutoSeq: expose a real per-mode setter instead of imitating UI clicks externally.
     replace_once(
         tx_h,
         "    void SetAutoSeqMode(int,bool);\n    bool GetAutoSeq();\n",
@@ -193,10 +181,19 @@ bool HvLabAutoSeq::GetAutoSeq()
 """
     replace_once(tx_cpp, autoseq_get_anchor, autoseq_method, "HvLabAutoSeq state setter")
 
+    hvtxw_autoseq_anchor = """    void SetAutoSeqAll(QString);
+
+    QString GetDirectLogQso()
+"""
+    hvtxw_autoseq_replacement = """    void SetAutoSeqAll(QString);
+    void SetDxwAutoSeq(bool);
+
+    QString GetDirectLogQso()
+"""
     replace_once(
         tx_h,
-        "    void SetAutoSeqAll(QString);\n",
-        "    void SetAutoSeqAll(QString);\n    void SetDxwAutoSeq(bool);\n",
+        hvtxw_autoseq_anchor,
+        hvtxw_autoseq_replacement,
         "HvTxW native AutoSeq method declaration",
     )
     replace_once(
@@ -218,14 +215,8 @@ bool HvLabAutoSeq::GetAutoSeq()
 }
 void HvTxW::AutoSeqLabPress()
 """
-    replace_once(
-        tx_cpp,
-        autoseq_press_anchor,
-        autoseq_press_replacement,
-        "HvTxW native AutoSeq setter",
-    )
+    replace_once(tx_cpp, autoseq_press_anchor, autoseq_press_replacement, "HvTxW native AutoSeq setter")
 
-    # Main window owns Multi Answer Standard and master AUTO. Reuse native paths.
     replace_once(
         main_h,
         "    void SetUdpConfigure(int);//2.76.7\n",
@@ -249,12 +240,7 @@ void HvTxW::AutoSeqLabPress()
 }
 void Main_Ms::SetMultiAnswerModStd(bool f)
 """
-    replace_once(
-        main_cpp,
-        main_std_anchor,
-        main_std_replacement,
-        "Main native automation implementation",
-    )
+    replace_once(main_cpp, main_std_anchor, main_std_replacement, "Main native automation implementation")
 
     print("DXWeaver native MSHV patch applied successfully")
 
