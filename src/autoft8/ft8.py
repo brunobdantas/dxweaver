@@ -25,20 +25,43 @@ def parse_cq(message: str) -> tuple[str, str] | None:
     return None
 
 
-def parse_directed_caller(message: str, my_call: str) -> tuple[str, str] | None:
-    """Recognize an initial response to our CQ: ``MYCALL CALLER GRID``.
+def parse_directed_to_me(message: str, my_call: str) -> tuple[str, str] | None:
+    """Return ``(sender, payload)`` for an FT8 message addressed to us.
 
-    Reports/RR73/73 are not promoted to new candidates; the radio application's Auto Seq
-    owns those once a QSO is active.
+    Examples recognized as inbound traffic from K1ABC to PU2BRU::
+
+        PU2BRU K1ABC FN31
+        PU2BRU K1ABC -12
+        PU2BRU K1ABC R-09
+        PU2BRU K1ABC RR73
+        PU2BRU K1ABC 73
+
+    This parser is deliberately broader than candidate creation. It is used by
+    the QSO state machine to know when a hunt target has actually answered us.
     """
     toks = message.upper().split()
-    if len(toks) < 3 or toks[0].strip("<>") != my_call.upper():
+    if len(toks) < 2 or toks[0].strip("<>") != my_call.upper().strip("<>"):
         return None
     if not looks_like_call(toks[1]):
         return None
-    third = toks[2].strip("<>")
-    if GRID_RE.match(third):
-        return toks[1].strip("<>"), third
+    sender = toks[1].strip("<>")
+    payload = toks[2].strip("<>") if len(toks) >= 3 else ""
+    return sender, payload
+
+
+def parse_directed_caller(message: str, my_call: str) -> tuple[str, str] | None:
+    """Recognize an initial call to us: ``MYCALL CALLER GRID``.
+
+    Reports/RR73/73 are not promoted to *new* candidates; once a QSO is active,
+    MSHV's Auto Seq owns the report/RR73/73 exchange. The broader
+    :func:`parse_directed_to_me` still observes those messages for state locking.
+    """
+    directed = parse_directed_to_me(message, my_call)
+    if not directed:
+        return None
+    sender, payload = directed
+    if GRID_RE.match(payload):
+        return sender, payload
     return None
 
 
