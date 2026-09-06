@@ -36,8 +36,11 @@ struct Candidate {
     std::string call;
     std::string grid;
     std::string entity;
+    std::string continent;
     std::string band;
     std::string mode{"FT8"};
+    int cqZone{0};
+    int ituZone{0};
     int snr{-30};
     int azimuthDeg{0};
     double distanceKm{0.0};
