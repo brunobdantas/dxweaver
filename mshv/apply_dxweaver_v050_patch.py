@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed build-time integration patch for DXWeaver 0.5.0.
 
-The official MSHV source remains the GPL-3.0 radio/DSP foundation.  DXWeaver's
+The official MSHV source remains the GPL-3.0 radio/DSP foundation. DXWeaver's
 C++11-compatible in-process automation and intelligence modules are injected
 without changing the legacy compiler dialect.
 """
@@ -60,9 +60,8 @@ def apply(upstream: Path) -> None:
     tx_h = upstream / "src/HvTxW/hvtxw.h"
     tx_cpp = upstream / "src/HvTxW/hvtxw.cpp"
 
-    # Deliberately keep legacy radio/DSP in its audited dialect.  The dxw:: core
-    # is separately compiled/tested as strict C++11 by CMake and is also valid
-    # under the same gnu++11 qmake build in the unified executable.
+    # Legacy radio/DSP remains exactly in the audited gnu++11 dialect. The
+    # dxw_core target is independently compiled as strict C++11 by CMake.
     require_once(pro, "QMAKE_CXXFLAGS += -std=gnu++11 -pedantic-errors\n", "legacy gnu++11 dialect")
     if "-std=gnu++17" in pro.read_text(encoding="utf-8"):
         raise RuntimeError("MSHV project unexpectedly requests gnu++17")
@@ -139,10 +138,12 @@ void Main_Ms::StopTxGlobal()
         "    setWindowTitle(\"DXWeaver 0.5.0\");\n",
         "DXWeaver window title")
 
-    # Expose only read-only snapshots of MSHV's authoritative station state.
+    # Use a unique HvTxW-class anchor rather than the multiple public-slots
+    # declarations belonging to helper widgets in the same header.
     replace_once(tx_h,
-        "public slots:\n",
-        """    QString DxwStationCall() const { return list_macros.value(0); }
+        "    void RefreshOtpKeyMsg();//2.76    \n\npublic slots:\n",
+        """    void RefreshOtpKeyMsg();//2.76    
+    QString DxwStationCall() const { return list_macros.value(0); }
     QString DxwStationGrid() const { return list_macros.value(1); }
     QString DxwBand() const { return s_band; }
 
