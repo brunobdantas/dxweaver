@@ -4,8 +4,21 @@ from importlib.resources import files
 import json
 import threading
 import time
+from . import __version__
 
 WEB_ROOT = files("autoft8").joinpath("web")
+
+
+def dashboard_state(engine) -> dict:
+    """Return the operator-console state with the canonical package version.
+
+    The decision engine deliberately owns radio/QSO state, while the package
+    version belongs to the application shell. Keeping that value here prevents
+    stale hard-coded dashboard versions after a release bump.
+    """
+    state = engine.snapshot()
+    state["version"] = __version__
+    return state
 
 
 class Dashboard:
@@ -59,7 +72,7 @@ class Dashboard:
                 if self.path == "/assets/dashboard.js":
                     return self._asset("dashboard.js", "text/javascript; charset=utf-8")
                 if self.path == "/api/state":
-                    return self._json(200, engine.snapshot())
+                    return self._json(200, dashboard_state(engine))
                 if self.path == "/events":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -69,7 +82,7 @@ class Dashboard:
                     self.end_headers()
                     try:
                         while True:
-                            payload = json.dumps(engine.snapshot(), default=str, separators=(",", ":"))
+                            payload = json.dumps(dashboard_state(engine), default=str, separators=(",", ":"))
                             self.wfile.write(f"data: {payload}\n\n".encode())
                             self.wfile.flush()
                             time.sleep(0.5)
@@ -92,7 +105,7 @@ class Dashboard:
                         engine.set_limits(data.get("per_hour"), data.get("per_session"))
                     else:
                         return self._json(404, {"error": "not found"})
-                    return self._json(200, {"ok": True, "state": engine.snapshot()})
+                    return self._json(200, {"ok": True, "state": dashboard_state(engine)})
                 except ValueError as exc:
                     return self._json(400, {"ok": False, "error": str(exc)})
                 except Exception as exc:
