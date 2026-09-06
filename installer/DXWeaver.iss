@@ -12,7 +12,6 @@ DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\installer-output
 OutputBaseFilename=DXWeaver-{#MyAppVersion}-Setup
 Compression=lzma2/ultra64
