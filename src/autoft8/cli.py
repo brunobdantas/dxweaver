@@ -6,6 +6,7 @@ import time
 import webbrowser
 from .config import Config
 from .engine import Engine
+from .native_engine import NativeEngine
 from .transport import UdpTransport, UdpRelay
 from .fanout import UdpFanout
 from .dashboard import Dashboard
@@ -43,7 +44,9 @@ def main(argv=None):
     n_cty = resolver.load(cty_path)
     logging.info("CTY.DAT: %s; %s entities loaded from %s", cty_status, n_cty, cty_path)
 
-    e = Engine(cfg, history, resolver)
+    engine_cls = NativeEngine if cfg.control_backend == "mshv_native" else Engine
+    e = engine_cls(cfg, history, resolver)
+    logging.info("Control backend: %s", cfg.control_backend)
     e.set_history_sources(loader.last_reports)
     if args.arm:
         cfg.mode = "auto"
