@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     paths:
-      - 'bootstrap/source.tgz.b64'
       - '.github/workflows/bootstrap-source.yml'
 
 permissions:
@@ -20,15 +19,34 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Reassemble and validate source snapshot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'dxweaver-bootstrap.tgz'
+          $parts = Get-ChildItem 'bootstrap/chunk*.b64' | Sort-Object Name
+          if ($parts.Count -ne 5) { throw "Expected 5 bootstrap chunks, found $($parts.Count)." }
+          $raw = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          $bytes = [Convert]::FromBase64String($raw)
+          [IO.File]::WriteAllBytes($archive, $bytes)
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          $expected = '2ad0ca9cfffa8a4e698b48a8c4d68c51ec02cca4365a9fecec34af214ba10320'
+          if ($actual -ne $expected) { throw "Bootstrap SHA256 mismatch. Expected $expected, got $actual." }
+          Write-Host "Bootstrap archive verified: $actual"
+
       - name: Expand validated source snapshot
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $archive = Join-Path $env:RUNNER_TEMP 'dxweaver-bootstrap.tgz'
-          $raw = Get-Content 'bootstrap/source.tgz.b64' -Raw
-          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($raw.Trim()))
-          tar -xzf $archive -C $env:RUNNER_TEMP
-          Copy-Item -Path (Join-Path $env:RUNNER_TEMP 'dxweaver\*') -Destination . -Recurse -Force
+          $stage = Join-Path $env:RUNNER_TEMP 'dxweaver-stage'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          tar -xzf $archive -C $stage
+          $source = Join-Path $stage 'dxweaver'
+          if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) { throw 'Snapshot missing pyproject.toml.' }
+          Copy-Item -Path (Join-Path $source '*') -Destination . -Recurse -Force
+          Copy-Item -Path (Join-Path $source '.gitignore') -Destination '.gitignore' -Force
+          Copy-Item -Path (Join-Path $source '.github') -Destination '.' -Recurse -Force
           Remove-Item -Recurse -Force bootstrap
           Remove-Item -Force '.github/workflows/bootstrap-source.yml'
 
