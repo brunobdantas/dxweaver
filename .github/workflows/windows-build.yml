@@ -7,14 +7,14 @@ on:
       - "CMakeLists.txt"
       - "src/native/**"
       - "tests/native/**"
-      - "mshv/apply_dxweaver_v050_patch.py"
+      - "mshv/apply_dxweaver_v051_patch.py"
       - "scripts/build_windows.ps1"
-      - "installer/DXWeaver-0.5.0.iss"
+      - "installer/DXWeaver-0.5.1.iss"
       - ".github/workflows/windows-build.yml"
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "Publish/update v0.5.0 GitHub Release"
+        description: "Publish/update v0.5.1 GitHub Release"
         type: boolean
         default: true
 
@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: dxweaver-native-050-${{ github.ref }}
+  group: dxweaver-native-051-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,23 +72,23 @@ jobs:
       - name: Upload official Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DXWeaver-0.5.0-Windows
+          name: DXWeaver-0.5.1-Windows
           path: |
-            installer-output/DXWeaver-0.5.0-Setup.exe
-            installer-output/DXWeaver-0.5.0-SHA256.txt
-            installer-output/DXWeaver-0.5.0-Source.zip
+            installer-output/DXWeaver-0.5.1-Setup.exe
+            installer-output/DXWeaver-0.5.1-SHA256.txt
+            installer-output/DXWeaver-0.5.1-Source.zip
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish v0.5.0 Release
+      - name: Publish v0.5.1 Release
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.5.0
+          tag_name: v0.5.1
           target_commitish: ${{ github.sha }}
-          name: DXWeaver v0.5.0 Native
+          name: DXWeaver v0.5.1 Native
           body: |
-            DXWeaver v0.5.0 — first unified native architecture.
+            DXWeaver v0.5.1 — cockpit/UI corrective release.
 
             Safety/QA gates:
             - in-process dxw:: QSO state machine; no UDP control dependency for automation;
@@ -99,12 +99,15 @@ jobs:
             - resilient history-provider fallback for locked/corrupt HRD data;
             - 120-candidate scoring performance gate under 5 ms per batch;
             - exact FT8 decision windows at 02/17/32/47 UTC seconds;
+            - DXWeaver Control Panel is owned by MSHV's master QVBoxLayout; no absolute geometry/z-order;
+            - visible Candidates Matrix is driven directly by the native CandidateScorer ranking;
+            - application-wide DxTheme.qss dark design system is packaged and validated;
             - packaged GUI smoke test before installer creation.
 
             The radio/DSP foundation is a GPL-3.0 derivative of official MSHV source at the pinned commit recorded in the source bundle. Required license/source notices are included.
           files: |
-            installer-output/DXWeaver-0.5.0-Setup.exe
-            installer-output/DXWeaver-0.5.0-SHA256.txt
-            installer-output/DXWeaver-0.5.0-Source.zip
+            installer-output/DXWeaver-0.5.1-Setup.exe
+            installer-output/DXWeaver-0.5.1-SHA256.txt
+            installer-output/DXWeaver-0.5.1-Source.zip
           fail_on_unmatched_files: true
           overwrite_files: true

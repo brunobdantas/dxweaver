@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DXWeaverNative VERSION 0.5.0 LANGUAGES CXX)
+project(DXWeaverNative VERSION 0.5.1 LANGUAGES CXX)
 
 # GoogleTest 1.15 may use a newer dialect internally. The product core itself is
 # explicitly pinned to strict C++11 below and is compiled independently from it.

@@ -6,6 +6,19 @@
 #include <algorithm>
 
 namespace dxw {
+namespace {
+
+QString newFlag(bool value) {
+    return value ? QStringLiteral("NEW") : QStringLiteral("-");
+}
+
+QString historyLabel(const Candidate& candidate) {
+    if (candidate.confirmed) return QStringLiteral("CONFIRMED");
+    if (candidate.worked) return QStringLiteral("WORKED");
+    return QStringLiteral("-");
+}
+
+} // namespace
 
 DxwMshvBridge::DxwMshvBridge(QString myCall,
                              QString myGrid,
@@ -113,6 +126,54 @@ Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString&
     return c;
 }
 
+void DxwMshvBridge::upsertCandidate(const Candidate& candidate) {
+    const QString call = QString::fromStdString(candidate.call).toUpper();
+    for (QVector<Candidate>::iterator it = candidates_.begin(); it != candidates_.end(); ++it) {
+        if (QString::fromStdString(it->call).toUpper() != call) continue;
+        const bool gainedGrid = it->grid.empty() && !candidate.grid.empty();
+        if (candidate.snr >= it->snr || gainedGrid) *it = candidate;
+        return;
+    }
+    candidates_.push_back(candidate);
+}
+
+void DxwMshvBridge::publishCandidateMatrix(bool rebuildRows) {
+    if (rebuildRows) {
+        matrixRows_.clear();
+        std::vector<Candidate> pool;
+        pool.reserve(static_cast<std::size_t>(candidates_.size()));
+        for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it)
+            pool.push_back(*it);
+
+        const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
+        const int limit = std::min(20, static_cast<int>(ranked.size()));
+        const QChar separator(0x1f);
+        for (int i = 0; i < limit; ++i) {
+            const RankedCandidate& rankedCandidate = ranked.at(static_cast<std::size_t>(i));
+            const Candidate& c = rankedCandidate.candidate;
+            const QString zone = (c.cqZone > 0 || c.ituZone > 0)
+                ? QString("%1/%2").arg(c.cqZone).arg(c.ituZone)
+                : QStringLiteral("-");
+            QStringList cells;
+            cells << QString::fromStdString(c.call)
+                  << QString::number(rankedCandidate.score.total)
+                  << newFlag(c.newDxcc)
+                  << newFlag(c.newBand)
+                  << newFlag(c.newMode)
+                  << newFlag(c.newSlot)
+                  << QString::number(c.snr)
+                  << (c.entity.empty() ? QStringLiteral("-") : QString::fromStdString(c.entity))
+                  << zone
+                  << QString::number(c.distanceKm, 'f', 0)
+                  << QString::number(c.azimuthDeg)
+                  << historyLabel(c);
+            matrixRows_ << cells.join(separator);
+        }
+    }
+
+    emit candidateMatrixChanged(matrixRows_, QString::fromStdString(sm_.activeCall()));
+}
+
 bool DxwMshvBridge::runnerUp(const QString& excluding, Candidate& result) const {
     std::vector<Candidate> pool;
     pool.reserve(static_cast<std::size_t>(candidates_.size()));
@@ -146,6 +207,7 @@ void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
         }
     }
     emitState();
+    publishCandidateMatrix(false);
 }
 
 void DxwMshvBridge::emitState() {
@@ -170,8 +232,12 @@ void DxwMshvBridge::setStationIdentity(QString call, QString grid) {
     myGrid_ = grid;
     candidates_.clear();
     rawByCall_.clear();
+    matrixRows_.clear();
     if (!actions.empty()) processActions(actions);
-    else emitState();
+    else {
+        emitState();
+        publishCandidateMatrix(false);
+    }
 }
 
 void DxwMshvBridge::setBand(QString band) {
@@ -180,7 +246,9 @@ void DxwMshvBridge::setBand(QString band) {
     band_ = band;
     candidates_.clear();
     rawByCall_.clear();
+    matrixRows_.clear();
     emitState();
+    publishCandidateMatrix(false);
 }
 
 void DxwMshvBridge::setArmed(bool armed) {
@@ -195,6 +263,7 @@ void DxwMshvBridge::setStrategy(int strategy) {
         processActions(sm_.arm(strategy_));
     }
     emitState();
+    publishCandidateMatrix(false);
 }
 
 void DxwMshvBridge::halt() {
@@ -206,7 +275,10 @@ void DxwMshvBridge::onQsoLogged(QStringList) {
     if (!active.empty()) processActions(sm_.onQsoLogged(active));
     candidates_.clear();
     rawByCall_.clear();
+    matrixRows_.clear();
     history_.reload();
+    emitState();
+    publishCandidateMatrix(false);
 }
 
 void DxwMshvBridge::onDecode(QStringList decode) {
@@ -221,6 +293,8 @@ void DxwMshvBridge::onDecode(QStringList decode) {
         const QString sender = tokens.at(1);
         rawByCall_.insert(sender, decode);
         Candidate caller = candidateFrom(decode, sender);
+        upsertCandidate(caller);
+        publishCandidateMatrix(true);
         const ExchangeStage stage = tokens.size() >= 3 ? exchangeStage(tokens.at(2)) : ExchangeStage::Unknown;
         if (!active.isEmpty() && sender == active) {
             processActions(sm_.onActiveExchange(sender.toStdString(), stage));
@@ -245,17 +319,9 @@ void DxwMshvBridge::onDecode(QStringList decode) {
     if (cqCall.isEmpty()) return;
     Candidate c = candidateFrom(decode, cqCall);
     rawByCall_.insert(cqCall, decode);
-
-    bool replaced = false;
-    for (QVector<Candidate>::iterator it = candidates_.begin(); it != candidates_.end(); ++it) {
-        if (QString::fromStdString(it->call) == cqCall) {
-            if (c.snr > it->snr) *it = c;
-            replaced = true;
-            break;
-        }
-    }
-    if (!replaced) candidates_.push_back(c);
+    upsertCandidate(c);
     emitState();
+    publishCandidateMatrix(true);
 }
 
 void DxwMshvBridge::onClock() {
@@ -270,8 +336,10 @@ void DxwMshvBridge::onClock() {
     for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it)
         pool.push_back(*it);
     const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
+    publishCandidateMatrix(true);
     if (!ranked.empty()) processActions(sm_.startHunt(ranked.front().candidate));
     candidates_.clear();
+    emitState();
 }
 
 } // namespace dxw

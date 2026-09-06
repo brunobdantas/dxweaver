@@ -35,6 +35,7 @@ signals:
     void haltTxRequested();
     void ensureAutoRequested();
     void stateChanged(QString state, QString activeCall, int candidateCount);
+    void candidateMatrixChanged(QStringList rows, QString activeCall);
 
 public slots:
     void onDecode(QStringList decode);
@@ -55,6 +56,8 @@ private:
     static QString findCqCall(const QStringList& tokens);
 
     Candidate candidateFrom(const QStringList& decode, const QString& call);
+    void upsertCandidate(const Candidate& candidate);
+    void publishCandidateMatrix(bool rebuildRows);
     void processActions(const std::vector<Action>& actions);
     void emitState();
     bool runnerUp(const QString& excluding, Candidate& result) const;
@@ -73,6 +76,7 @@ private:
     QVector<Candidate> candidates_;
     QHash<QString, QStringList> rawByCall_;
     QHash<QString, QDateTime> cooldowns_;
+    QStringList matrixRows_;
     int lastDecisionSecond_{-1};
 };
 

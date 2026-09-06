@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1 — Cockpit layout and dark UI corrective release
+
+- Removed the floating `setGeometry` / `raise()` integration that allowed the DXWeaver controls to be covered by the MSHV waterfall/ruler.
+- Attached the DXWeaver Control Panel directly to the existing `Main_Ms` master `QVBoxLayout` at index 0.
+- Added a permanently visible **Candidates Matrix** at index 1, fed directly by the in-process `CandidateScorer` ranking.
+- Matrix exposes score, New DXCC/Band/Mode/Slot, SNR, entity, CQ/ITU zones, distance, azimuth, history and target lock.
+- Added application-wide `DxTheme.qss` using the DXWeaver dark design tokens and explicit ARM/HALT TX states.
+- Added fail-closed Windows CI gates for layout ownership, absence of absolute panel geometry, Candidate Matrix wiring and packaged QSS resources.
+- Bumped the unified native Windows installer/release to `DXWeaver-0.5.1-Setup.exe`.
+
+## 0.5.0 — Unified native architecture
+
+- Moved live FT8 QSO lifecycle ownership into the MSHV-derived native process.
+- Added dynamic station callsign/grid identity updates and safe disarm on callsign changes while armed.
+- Connected CTY.DAT entity/CQ/ITU intelligence and HRD/ADIF history cache to the native CandidateScorer.
+- Preserved degraded scoring when history is unavailable and maintained strict C++11 compatibility for `dxw::` modules.
+- Added full Windows build, CTest, GUI smoke test, GPL source bundle, Inno Setup and SHA-256 release gates.
+
 ## 0.4.0 — Native MSHV control
 
 - Added companion **MSHV-DXWeaver** Windows build from official MSHV pinned to `8f93eb3e25056f0cb18699ef6c3bef3998c52cdf`.

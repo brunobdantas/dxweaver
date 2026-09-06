@@ -3,8 +3,9 @@ Set-StrictMode -Version Latest
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-$Version = "0.5.0"
+$Version = "0.5.1"
 $PinnedMshv = "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf"
+$Patcher = "mshv/apply_dxweaver_v051_patch.py"
 
 function Assert-LastExit([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
@@ -27,8 +28,18 @@ ctest --test-dir build-native -C Release --output-on-failure --timeout 120
 Assert-LastExit "CTest native QA"
 
 # Product code must never carry the operator callsign as configuration.
-$Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp","mshv\apply_dxweaver_v050_patch.py" -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
+$Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp",$Patcher -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
 if ($Hardcoded) { throw "Hardcoded station identity detected in product integration" }
+
+# UI source gate: the cockpit itself may not use absolute panel geometry/z-order.
+$UiSources = @(
+    "src\native\mshv_bridge\DxwControlPanel.cpp",
+    "src\native\mshv_bridge\DxwCandidateMatrix.cpp",
+    $Patcher
+)
+$AbsolutePanelLayout = Select-String -Path $UiSources -Pattern "dxwPanel->setGeometry|dxwPanel->move\(|dxwPanel->raise\(" -ErrorAction SilentlyContinue
+if ($AbsolutePanelLayout) { throw "Absolute DXWeaver panel geometry/z-order detected" }
+if (-not (Test-Path "src\native\mshv_bridge\DxTheme.qss")) { throw "DxTheme.qss source is missing" }
 
 # 2. Clone audited radio/DSP foundation and inject DXWeaver in-process core.
 Remove-Item -Recurse -Force mshv-upstream -ErrorAction SilentlyContinue
@@ -39,9 +50,9 @@ Assert-LastExit "MSHV pinned checkout"
 $Actual = (git -C mshv-upstream rev-parse HEAD).Trim()
 if ($Actual -ne $PinnedMshv) { throw "Unexpected MSHV source $Actual" }
 
-& $Python -m py_compile mshv/apply_dxweaver_v050_patch.py
+& $Python -m py_compile $Patcher
 Assert-LastExit "DXWeaver patch syntax"
-& $Python mshv/apply_dxweaver_v050_patch.py mshv-upstream
+& $Python $Patcher mshv-upstream
 Assert-LastExit "DXWeaver native integration patch"
 git -C mshv-upstream diff --check
 Assert-LastExit "Patched source diff check"
@@ -52,6 +63,27 @@ if ($ProText -notmatch [regex]::Escape("QMAKE_CXXFLAGS += -std=gnu++11 -pedantic
 }
 if ($ProText -match "gnu\+\+17") { throw "C++17 leaked into legacy MSHV project" }
 Write-Host "PASS: legacy radio/DSP remains gnu++11; dxw_core is strict C++11" -ForegroundColor Green
+
+# Structural UI gate against the fully patched upstream source. This catches a
+# build that compiles but floats the DXWeaver controls behind the waterfall.
+$PatchedMain = Get-Content "mshv-upstream\src\main_ms.cpp" -Raw
+foreach ($requiredLayout in @(
+    "V_l->insertWidget(0, dxwPanel);",
+    "V_l->insertWidget(1, dxwCandidates);",
+    "candidateMatrixChanged(QStringList,QString)",
+    "DxwControlPanel::applyGlobalTheme(App_Path)",
+    "dsty = true; // DXWeaver owns a single dark visual identity."
+)) {
+    if ($PatchedMain -notmatch [regex]::Escape($requiredLayout)) { throw "UI hierarchy contract missing: $requiredLayout" }
+}
+if ($PatchedMain -match "dxwPanel->setGeometry|dxwPanel->raise\(") { throw "Patched main window still contains floating DXWeaver panel geometry" }
+$PatchedTheme = "mshv-upstream\bin\settings\resources\dxweaver\DxTheme.qss"
+if (-not (Test-Path $PatchedTheme)) { throw "Patched upstream theme resource missing" }
+$ThemeText = Get-Content $PatchedTheme -Raw
+foreach ($token in @("#0B0F14", "#111821", "#263341", "#E6EDF3", "#B63A3A", "QTableWidget#dxwCandidatesTable")) {
+    if ($ThemeText -notmatch [regex]::Escape($token)) { throw "DXWeaver design-system token missing: $token" }
+}
+Write-Host "PASS: DXWeaver layout, Candidate Matrix and dark-theme contracts" -ForegroundColor Green
 
 # 3. Build the single native DXWeaver executable using the upstream Qt/qmake project.
 $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
@@ -77,6 +109,7 @@ New-Item -ItemType Directory -Force "$Pkg\log" | Out-Null
 Get-ChildItem $Pkg -Recurse -File -Include *.ttf,*.otf,*.woff,*.woff2 -ErrorAction SilentlyContinue | Remove-Item -Force
 
 if (-not (Test-Path "$Pkg\settings\database\cty.dat")) { throw "cty.dat missing from package" }
+if (-not (Test-Path "$Pkg\settings\resources\dxweaver\DxTheme.qss")) { throw "DxTheme.qss missing from package" }
 
 $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
 & $windeployqt --release --compiler-runtime --no-translations --dir $Pkg "$Pkg\DXWeaver.exe"
@@ -102,14 +135,23 @@ if (-not (Test-Path "$Pkg\sqldrivers\qsqlite.dll")) {
 foreach ($dll in @("libgcc_s_seh-1.dll","libstdc++-6.dll","libwinpthread-1.dll")) {
     if (-not (Test-Path "$Pkg\$dll")) { Copy-Item (Join-Path $mingwBin $dll) $Pkg -Force }
 }
-foreach ($required in @("DXWeaver.exe","Qt5Core.dll","Qt5Widgets.dll","Qt5Sql.dll","platforms\qwindows.dll","sqldrivers\qsqlite.dll","settings\database\cty.dat")) {
+foreach ($required in @(
+    "DXWeaver.exe",
+    "Qt5Core.dll",
+    "Qt5Widgets.dll",
+    "Qt5Sql.dll",
+    "platforms\qwindows.dll",
+    "sqldrivers\qsqlite.dll",
+    "settings\database\cty.dat",
+    "settings\resources\dxweaver\DxTheme.qss"
+)) {
     if (-not (Test-Path (Join-Path $Pkg $required))) { throw "Packaged runtime missing: $required" }
 }
 
 # GPL/attribution stays with the derivative product even though its visual identity is DXWeaver.
 Copy-Item "mshv-upstream\COPYING.txt" "$Pkg\COPYING-GPL-3.0.txt" -Force
 @"
-DXWeaver 0.5.0
+DXWeaver $Version
 Native FT8 automation and cockpit project.
 
 The radio/DSP foundation is derived from MSHV and distributed under GPL-3.0.
@@ -129,20 +171,20 @@ if ($p.HasExited) {
 Write-Host "PASS: packaged GUI smoke test" -ForegroundColor Green
 
 # 6. Corresponding source archive for GPL compliance/reproducibility.
-cmd /c "git -C mshv-upstream diff --binary > dxweaver-package\DXWeaver-0.5.0-MSHV.patch"
+cmd /c "git -C mshv-upstream diff --binary > dxweaver-package\DXWeaver-$Version-MSHV.patch"
 Assert-LastExit "Export native patch"
 $SourceStage = Join-Path $Root "source-stage"
 Remove-Item -Recurse -Force $SourceStage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$SourceStage\dxweaver\src" | Out-Null
 Copy-Item "src\native" "$SourceStage\dxweaver\src\native" -Recurse -Force
-Copy-Item "mshv\apply_dxweaver_v050_patch.py" "$SourceStage\dxweaver\" -Force
+Copy-Item $Patcher "$SourceStage\dxweaver\" -Force
 Copy-Item "CMakeLists.txt" "$SourceStage\dxweaver\" -Force
 Copy-Item "mshv-upstream" "$SourceStage\mshv-upstream" -Recurse -Force
 Remove-Item -Recurse -Force "$SourceStage\mshv-upstream\.git", "$SourceStage\mshv-upstream\build", "$SourceStage\mshv-upstream\bin" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force installer-output | Out-Null
-tar.exe -a -c -f "installer-output\DXWeaver-0.5.0-Source.zip" -C $SourceStage .
+tar.exe -a -c -f "installer-output\DXWeaver-$Version-Source.zip" -C $SourceStage .
 Assert-LastExit "Source archive"
-if (-not (Test-Path "installer-output\DXWeaver-0.5.0-Source.zip")) { throw "GPL source archive missing" }
+if (-not (Test-Path "installer-output\DXWeaver-$Version-Source.zip")) { throw "GPL source archive missing" }
 
 # 7. Per-user installer.
 $Iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
@@ -152,12 +194,12 @@ if (-not $Iscc) {
     }
 }
 if (-not $Iscc) { throw "Inno Setup 6 / ISCC.exe not found" }
-& $Iscc "installer\DXWeaver-0.5.0.iss"
+& $Iscc "installer\DXWeaver-$Version.iss"
 Assert-LastExit "Inno Setup"
 
-$Setup = "installer-output\DXWeaver-0.5.0-Setup.exe"
+$Setup = "installer-output\DXWeaver-$Version-Setup.exe"
 if (-not (Test-Path $Setup)) { throw "Installer was not produced: $Setup" }
 $Hash = Get-FileHash $Setup -Algorithm SHA256
-"$($Hash.Hash)  DXWeaver-0.5.0-Setup.exe" | Set-Content "installer-output\DXWeaver-0.5.0-SHA256.txt" -Encoding ascii
+"$($Hash.Hash)  DXWeaver-$Version-Setup.exe" | Set-Content "installer-output\DXWeaver-$Version-SHA256.txt" -Encoding ascii
 Write-Host "PASS: $Setup" -ForegroundColor Green
 Write-Host "SHA256 $($Hash.Hash)" -ForegroundColor Green
