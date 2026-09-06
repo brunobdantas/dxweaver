@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Apply the DXWeaver native-control extension to a pinned MSHV checkout.
 
-The upstream MSHV tree remains external and GPL-3.0.  This script performs
-small, asserted source transformations against the pinned upstream commit.  It
-fails closed if upstream context changes, so CI cannot silently build a partly
-patched radio application.
+The upstream MSHV tree remains external and GPL-3.0. This patcher performs
+small asserted source transformations against one pinned upstream commit and
+fails closed if any expected anchor changes.
 """
 from __future__ import annotations
 
@@ -61,7 +60,7 @@ def apply(root: Path) -> None:
     main_cpp = root / "src/main_ms.cpp"
     pro = root / "MSHV_WIN64.pro"
 
-    # Build a separate executable so stock MSHV can remain installed alongside it.
+    # Separate executable so stock MSHV can coexist with the DXWeaver build.
     replace_once(
         pro,
         "CONFIG += release warn_on exceptions_off\n",
@@ -69,7 +68,7 @@ def apply(root: Path) -> None:
         "separate executable target",
     )
 
-    # Status extension reports actual AUTO plus the two DXWeaver-native states.
+    # Extend Status with an explicit DXWeaver extension marker plus native-state acks.
     replace_once(
         msg_h,
         "\t\t\t\tbool,QString);\n",
@@ -89,9 +88,8 @@ def apply(root: Path) -> None:
         "Status native acknowledgement tail",
     )
 
-    # Configure: preserve the standard payload and optionally consume the three
-    # trailing DXWeaver booleans. A marker in QStringList distinguishes an
-    # actual extension from an ordinary Configure packet whose defaults are false.
+    # Configure: keep the standard WSJT-X-compatible payload and consume three
+    # optional trailing booleans only when a DXWeaver sender appended them.
     old_config_parse = """                bool generate_messages {false};
                 in >> mode >> frequency_tolerance >> submode >> fast_mode >> tr_period >> rx_df
                 >> dx_call >> dx_grid >> generate_messages;
@@ -113,23 +111,22 @@ def apply(root: Path) -> None:
 """
     replace_once(msg_cpp, old_config_parse, new_config_parse, "Configure extension parser")
 
-    old_config_emit = """                    QStringList list; //mode = mode.toUpper(); submode = submode.toUpper();
-                    list<<QString::fromUtf8(mode)<<QString::fromUtf8(submode);//<<QString::fromUtf8(dx_call)<<QString::fromUtf8(dx_grid);
-                    Q_EMIT self_->configure(list);//,generate_messages);               
-"""
-    new_config_emit = """                    QStringList list; //mode = mode.toUpper(); submode = submode.toUpper();
-                    list<<QString::fromUtf8(mode)<<QString::fromUtf8(submode);//<<QString::fromUtf8(dx_call)<<QString::fromUtf8(dx_grid);
-                    if (dxw_extension_present)
+    # Insert before the existing emit rather than matching trailing whitespace.
+    config_emit_anchor = "                    Q_EMIT self_->configure(list);//,generate_messages);"
+    config_emit_replacement = """                    if (dxw_extension_present)
                     {
                         list<<"DXW1"<<QString::number(dxw_auto_enabled)
                             <<QString::number(dxw_auto_seq)<<QString::number(dxw_multi_answer_std);
                     }
-                    Q_EMIT self_->configure(list);//,generate_messages);               
-"""
-    replace_once(msg_cpp, old_config_emit, new_config_emit, "Configure extension signal payload")
+                    Q_EMIT self_->configure(list);//,generate_messages);"""
+    replace_once(
+        msg_cpp,
+        config_emit_anchor,
+        config_emit_replacement,
+        "Configure extension signal payload",
+    )
 
-    # Radio/network layer stores the requested native states so each Status packet
-    # can acknowledge them to DXWeaver, and forwards the command into the UI/core.
+    # Radio/network layer stores requested native state and acknowledges it in Status.
     replace_once(
         net_h,
         "    void EmitUdpConfigure(int);//2.76.7\n",
@@ -149,14 +146,14 @@ def apply(root: Path) -> None:
         2,
         "Status native state forwarding",
     )
+
     old_config_tail = """    if (imode<0) return;  //qDebug()<<" OUT="<<imode<<" - "<<m<<sm;\tqDebug()<<"-----------------";
 \temit EmitUdpConfigure(imode);
 }
 void RadioAndNetW::set_halt_tx(bool f)
 """
-    new_config_tail = """    // DXWeaver extension is independent of mode changes. This intentionally
-    // runs before the ordinary imode<0 early return because DXWeaver normally
-    // sends Configure with an empty mode to avoid changing the operator's mode.
+    new_config_tail = """    // DXWeaver extension is independent of mode changes. Run it before the
+    // ordinary imode<0 return because the controller normally sends empty mode.
     if (l.count() >= 6 && l.at(2)=="DXW1")
     {
         bool dxw_auto = l.at(3).toInt();
@@ -172,20 +169,15 @@ void RadioAndNetW::set_halt_tx(bool f)
 """
     replace_once(net_cpp, old_config_tail, new_config_tail, "RadioAndNetW Configure native dispatch")
 
-    # AutoSeq needs an explicit setter. Upstream SetAutoSeqMode() only selects a
-    # mode/enabled appearance; it does not change the per-mode AutoSeq value.
+    # AutoSeq: expose a real per-mode setter instead of imitating UI clicks externally.
     replace_once(
         tx_h,
         "    void SetAutoSeqMode(int,bool);\n    bool GetAutoSeq();\n",
         "    void SetAutoSeqMode(int,bool);\n    void SetAutoSeqState(bool); // DXWeaver native control\n    bool GetAutoSeq();\n",
         "HvLabAutoSeq state setter declaration",
     )
-    autoseq_insert_marker = """bool HvLabAutoSeq::GetAutoSeq()
-{
-    return s_autoseq[s_mode];
-}
-"""
-    autoseq_insert = """void HvLabAutoSeq::SetAutoSeqState(bool state)
+    autoseq_get_anchor = "bool HvLabAutoSeq::GetAutoSeq()\n"
+    autoseq_method = """void HvLabAutoSeq::SetAutoSeqState(bool state)
 {
     if (s_autoseq[s_mode] == state) return;
     s_autoseq[s_mode] = state;
@@ -198,11 +190,8 @@ void RadioAndNetW::set_halt_tx(bool f)
     emit EmitLabAutoSeqPress();
 }
 bool HvLabAutoSeq::GetAutoSeq()
-{
-    return s_autoseq[s_mode];
-}
 """
-    replace_once(tx_cpp, autoseq_insert_marker, autoseq_insert, "HvLabAutoSeq state setter")
+    replace_once(tx_cpp, autoseq_get_anchor, autoseq_method, "HvLabAutoSeq state setter")
 
     replace_once(
         tx_h,
@@ -222,16 +211,21 @@ bool HvLabAutoSeq::GetAutoSeq()
         "    connect(TRadioAndNetW,SIGNAL(EmitUdpConfigure(int)),this,SIGNAL(EmitUdpConfigure(int)));\n    connect(TRadioAndNetW,SIGNAL(EmitDxwAutomation(bool,bool,bool)),this,SIGNAL(EmitDxwAutomation(bool,bool,bool)));\n",
         "HvTxW native signal forwarding",
     )
-    # Add the explicit per-mode AutoSeq setter before an existing stable method.
+    autoseq_press_anchor = "void HvTxW::AutoSeqLabPress()\n"
+    autoseq_press_replacement = """void HvTxW::SetDxwAutoSeq(bool enabled)
+{
+    AutoSeqLab->SetAutoSeqState(enabled);
+}
+void HvTxW::AutoSeqLabPress()
+"""
     replace_once(
         tx_cpp,
-        "void HvTxW::AutoSeqLabPress()\n{\n    count_73_auto_seq = 0;// reset 73\n}\n",
-        "void HvTxW::SetDxwAutoSeq(bool enabled)\n{\n    AutoSeqLab->SetAutoSeqState(enabled);\n}\nvoid HvTxW::AutoSeqLabPress()\n{\n    count_73_auto_seq = 0;// reset 73\n}\n",
+        autoseq_press_anchor,
+        autoseq_press_replacement,
         "HvTxW native AutoSeq setter",
     )
 
-    # Main window owns the QAction-backed Multi Answer mode and the master AUTO
-    # toggle. Use those existing paths so decoder/UI/core state remains coherent.
+    # Main window owns Multi Answer Standard and master AUTO. Reuse native paths.
     replace_once(
         main_h,
         "    void SetUdpConfigure(int);//2.76.7\n",
@@ -244,19 +238,23 @@ bool HvLabAutoSeq::GetAutoSeq()
         "    connect(THvTxW, SIGNAL(EmitUdpConfigure(int)),this,SLOT(SetUdpConfigure(int)));//2.76.7\n    connect(THvTxW, SIGNAL(EmitDxwAutomation(bool,bool,bool)),this,SLOT(SetDxwAutomation(bool,bool,bool)));\n",
         "Main native automation connection",
     )
-    main_insert_marker = "void Main_Ms::SetMultiAnswerModStd(bool f)\n{\n"
-    main_insert = """void Main_Ms::SetDxwAutomation(bool auto_enabled,bool auto_seq,bool multi_std)
+    main_std_anchor = "void Main_Ms::SetMultiAnswerModStd(bool f)\n"
+    main_std_replacement = """void Main_Ms::SetDxwAutomation(bool auto_enabled,bool auto_seq,bool multi_std)
 {
     THvTxW->SetDxwAutoSeq(auto_seq);
     if (Multi_answer_mod_std->isChecked() != multi_std)
-        Multi_answer_mod_std->setChecked(multi_std); // existing slot updates decoder + Tx widget
+        Multi_answer_mod_std->setChecked(multi_std);
     if (THvTxW->GetAutoIsOn() != auto_enabled)
-        THvTxW->auto_on(); // existing master AUTO path keeps TX/RX/core state coherent
+        THvTxW->auto_on();
 }
 void Main_Ms::SetMultiAnswerModStd(bool f)
-{
 """
-    replace_once(main_cpp, main_insert_marker, main_insert, "Main native automation implementation")
+    replace_once(
+        main_cpp,
+        main_std_anchor,
+        main_std_replacement,
+        "Main native automation implementation",
+    )
 
     print("DXWeaver native MSHV patch applied successfully")
 
