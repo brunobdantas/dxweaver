@@ -1,79 +1,15 @@
-name: Windows Installer
+name: Legacy 0.4 Builder (deprecated)
 
 on:
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Publish/update the v0.4.1 GitHub Release"
-        type: boolean
-        default: false
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
 
 permissions:
-  contents: write
-
-concurrency:
-  group: dxweaver-windows-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  build-windows-installer:
+  deprecated:
     runs-on: windows-latest
-    timeout-minutes: 25
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.13"
-          cache: pip
-
-      - name: Install Inno Setup
+      - name: Deprecated pipeline notice
         shell: pwsh
-        run: choco install innosetup -y --no-progress
-
-      - name: Test and build standalone installer
-        shell: pwsh
-        run: ./scripts/build_windows.ps1
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DXWeaver-0.4.1-Windows
-          path: |
-            installer-output/DXWeaver-0.4.1-Setup.exe
-            installer-output/SHA256.txt
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish GitHub Release
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v0.4.1
-          target_commitish: ${{ github.sha }}
-          name: DXWeaver v0.4.1
-          body: |
-            DXWeaver v0.4.1 — phase-aware native MSHV automation.
-
-            - Fixes the false NATIVE PENDING state seen while MSHV is visibly in MA Standard.
-            - Models the native profiles MSHV actually supports instead of requiring AUTO + AutoSeq + MA Standard simultaneously.
-            - ANSWER READY = AUTO ON + AutoSeq OFF + MA Standard ON.
-            - HUNT READY = AUTO ON + AutoSeq ON + MA Standard OFF.
-            - BOTH stays ANSWER READY by default, switches temporarily to HUNT READY only for an eligible CQ, lets MSHV own the QSO, then returns to ANSWER READY after log/timeout.
-            - Directed callers have priority and cancel a pending hunt transition.
-            - The cockpit now shows the active native phase and displays AutoSeq as owned by MA Standard when appropriate.
-            - GridTracker/WRL topology remains MSHV -> DXWeaver :2237 -> GridTracker :2238 -> DXWeaver relay :2239 -> WRL :2240.
-
-            Companion MSHV-DXWeaver hotfix 0.4.0 remains compatible with this controller release.
-          files: |
-            installer-output/DXWeaver-0.4.1-Setup.exe
-            installer-output/SHA256.txt
-          fail_on_unmatched_files: true
-          overwrite_files: true
+        run: Write-Host "DXWeaver 0.4.x builder is frozen. Use windows-build.yml for the native 0.5+ product."
