@@ -10,6 +10,11 @@ function Assert-LastExit([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
 }
 
+$Python = if ($env:Python_ROOT_DIR) { Join-Path $env:Python_ROOT_DIR "python.exe" } else { (Get-Command python.exe -ErrorAction Stop).Source }
+if (-not (Test-Path $Python)) { throw "Python executable not found: $Python" }
+& $Python -c "import sys; print(sys.executable); print(sys.version); assert sys.version_info >= (3,10)"
+Assert-LastExit "Python >=3.10 validation"
+
 Write-Host "== DXWeaver $Version native Windows build ==" -ForegroundColor Cyan
 
 # 1. Mission-critical native core: Release build + mandatory CTest.
@@ -30,9 +35,9 @@ Assert-LastExit "MSHV pinned checkout"
 $Actual = (git -C mshv-upstream rev-parse HEAD).Trim()
 if ($Actual -ne $PinnedMshv) { throw "Unexpected MSHV source $Actual" }
 
-python -m py_compile mshv/apply_dxweaver_v050_patch.py
+& $Python -m py_compile mshv/apply_dxweaver_v050_patch.py
 Assert-LastExit "DXWeaver patch syntax"
-python mshv/apply_dxweaver_v050_patch.py mshv-upstream
+& $Python mshv/apply_dxweaver_v050_patch.py mshv-upstream
 Assert-LastExit "DXWeaver native integration patch"
 git -C mshv-upstream diff --check
 Assert-LastExit "Patched source diff check"
