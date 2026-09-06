@@ -105,7 +105,7 @@ cmd /c "git -C mshv-upstream diff --binary > dxweaver-package\DXWeaver-0.5.0-MSH
 Assert-LastExit "Export native patch"
 $SourceStage = Join-Path $Root "source-stage"
 Remove-Item -Recurse -Force $SourceStage -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "$SourceStage\dxweaver" | Out-Null
+New-Item -ItemType Directory -Force "$SourceStage\dxweaver\src" | Out-Null
 Copy-Item "src\native" "$SourceStage\dxweaver\src\native" -Recurse -Force
 Copy-Item "mshv\apply_dxweaver_v050_patch.py" "$SourceStage\dxweaver\" -Force
 Copy-Item "CMakeLists.txt" "$SourceStage\dxweaver\" -Force
