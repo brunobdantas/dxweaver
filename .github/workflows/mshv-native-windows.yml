@@ -29,16 +29,6 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Qt 5.15.2 MinGW
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: "5.15.2"
-          host: "windows"
-          target: "desktop"
-          arch: "win64_mingw81"
-          tools: "tools_mingw,qt.tools.win64_mingw810"
-          cache: true
-
       - name: Clone pinned official MSHV
         shell: pwsh
         run: |
@@ -49,14 +39,27 @@ jobs:
           $sha = (git -C mshv-upstream rev-parse HEAD).Trim()
           if ($sha -ne "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf") { throw "unexpected MSHV commit $sha" }
 
-      - name: Apply DXWeaver native patch
+      - name: Validate and apply DXWeaver native patch
         shell: pwsh
         run: |
+          python --version
+          python -m py_compile mshv/apply_dxweaver_patch.py
+          if ($LASTEXITCODE -ne 0) { throw "MSHV patcher syntax validation failed" }
           python mshv/apply_dxweaver_patch.py mshv-upstream
           if ($LASTEXITCODE -ne 0) { throw "DXWeaver MSHV patch failed" }
           git -C mshv-upstream diff --check
           if ($LASTEXITCODE -ne 0) { throw "patched MSHV diff check failed" }
           git -C mshv-upstream diff --stat
+
+      - name: Install Qt 5.15.2 MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_mingw81"
+          tools: "tools_mingw,qt.tools.win64_mingw810"
+          cache: true
 
       - name: Resolve MinGW tools
         id: mingw
