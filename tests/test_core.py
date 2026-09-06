@@ -1,7 +1,7 @@
 import time
 from autoft8.qdatastream import Writer
 from autoft8 import protocol
-from autoft8.ft8 import parse_cq, band_from_hz
+from autoft8.ft8 import parse_cq, parse_directed_to_me, band_from_hz
 from autoft8.config import Config
 from autoft8.adif import History
 from autoft8.models import Candidate
@@ -20,6 +20,13 @@ def test_cq_parser():
     assert parse_cq('CQ K1ABC FN31')==('K1ABC','FN31')
     assert parse_cq('CQ DX PY2ZZ GG66')==('PY2ZZ','GG66')
     assert band_from_hz(14074000)=='20m'
+
+def test_directed_parser_tracks_full_qso_exchange():
+    assert parse_directed_to_me('PU2BRU LU2DPG GF05', 'PU2BRU') == ('LU2DPG', 'GF05')
+    assert parse_directed_to_me('PU2BRU LU2DPG -11', 'PU2BRU') == ('LU2DPG', '-11')
+    assert parse_directed_to_me('PU2BRU LU2DPG R-09', 'PU2BRU') == ('LU2DPG', 'R-09')
+    assert parse_directed_to_me('PU2BRU LU2DPG RR73', 'PU2BRU') == ('LU2DPG', 'RR73')
+    assert parse_directed_to_me('TA2ANK LU2DPG -11', 'PU2BRU') is None
 
 def test_scoring_prefers_new_slot():
     cfg=Config(callsign='PU2BRU'); h=History(); h.add('K1ABC','40m','FT8','FN31')
