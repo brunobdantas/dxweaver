@@ -43,7 +43,7 @@ private:
     Candidate candidateFrom(const QStringList& decode, const QString& call) const;
     void processActions(const std::vector<Action>& actions);
     void emitState();
-    std::optional<Candidate> runnerUp(const QString& excluding) const;
+    bool runnerUp(const QString& excluding, Candidate& result) const;
 
     QString myCall_;
     Strategy strategy_{Strategy::Both};
