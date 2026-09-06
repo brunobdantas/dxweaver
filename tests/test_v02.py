@@ -57,7 +57,7 @@ def test_entity_scoring():
 
 
 def test_engine_answers_recent_cq_caller():
-    cfg=Config(callsign='PU2BRU',mode='auto',operating_strategy='answer',selection_delay_sec=0.0,answer_directed_after_cq_only=True)
+    cfg=Config(callsign='PU2BRU',mode='auto',operating_strategy='answer',selection_delay_sec=0.0,directed_call_policy='after_cq')
     e=Engine(cfg,History()); t=FakeTransport(); e.attach_transport(t); addr=('127.0.0.1',50000)
     status=protocol.Message(protocol.STATUS,'Status','MSHV',3,{'dial_frequency':14074000,'mode':'FT8','dx_call':'','transmitting':False,'special_operation_mode':'NONE','tx_message':'CQ PU2BRU GG66'})
     decode=protocol.Message(protocol.DECODE,'Decode','MSHV',3,{'new':True,'time_ms':1000,'snr':-9,'delta_time':0.1,'delta_frequency':800,'mode':'FT8','message':'PU2BRU K1ABC FN31','low_confidence':False,'off_air':False})
@@ -65,8 +65,8 @@ def test_engine_answers_recent_cq_caller():
     assert len(t.sent)==1 and t.sent[0][0].type==protocol.REPLY and e.active_call=='K1ABC'
 
 
-def test_engine_rejects_stale_directed_call():
-    cfg=Config(callsign='PU2BRU',mode='auto',operating_strategy='answer',selection_delay_sec=0.0,answer_directed_after_cq_only=True,cq_response_window_sec=1)
+def test_engine_rejects_stale_directed_call_when_policy_is_after_cq():
+    cfg=Config(callsign='PU2BRU',mode='auto',operating_strategy='answer',selection_delay_sec=0.0,directed_call_policy='after_cq',cq_response_window_sec=1)
     e=Engine(cfg,History()); t=FakeTransport(); e.attach_transport(t); addr=('127.0.0.1',50000)
     e.status={'dial_frequency':14074000,'mode':'FT8','dx_call':'','transmitting':False,'special_operation_mode':'NONE'}
     e.instance='MSHV'; e.source_addr=addr; e.last_cq_activity=time.time()-10
