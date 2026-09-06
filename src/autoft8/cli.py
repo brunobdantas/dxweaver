@@ -49,10 +49,13 @@ def main(argv=None):
         cfg.mode = "auto"
         e.set_armed(True)
 
+    # Fanout is intentionally independent from Engine state: UdpTransport invokes
+    # it directly for every raw datagram before protocol parsing. This keeps
+    # GridTracker forwarding transparent and prevents the automation engine from
+    # becoming a dependency of the routing path.
     fanout = None
     if cfg.gridtracker_forward_enabled:
         fanout = UdpFanout(cfg.gridtracker_forward_host, cfg.gridtracker_forward_port)
-        e.attach_fanout(fanout)
 
     t = UdpTransport(
         cfg.listen_host,
