@@ -34,7 +34,8 @@ Name: "desktopicon"; Description: "Criar atalho na Área de Trabalho"; GroupDesc
 [Files]
 ; Runtime and application files. Existing user settings are deliberately preserved.
 Source: "..\mshv-package\*"; DestDir: "{app}"; Excludes: "settings\*"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\mshv-package\settings\*"; DestDir: "{app}\settings"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
+; Do not distribute bundled font files. MSHV falls back to installed system fonts.
+Source: "..\mshv-package\settings\*"; DestDir: "{app}\settings"; Excludes: "resources\font\*"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
