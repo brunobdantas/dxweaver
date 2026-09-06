@@ -7,6 +7,7 @@ import webbrowser
 from .config import Config
 from .engine import Engine
 from .transport import UdpTransport, UdpRelay
+from .fanout import UdpFanout
 from .dashboard import Dashboard
 from .history_sources import HistoryLoader
 from .cty import CtyResolver, ensure_cty_file
@@ -48,17 +49,33 @@ def main(argv=None):
         cfg.mode = "auto"
         e.set_armed(True)
 
-    t = UdpTransport(cfg.listen_host, cfg.listen_port, e.on_message, multicast_group=cfg.multicast_group)
+    fanout = None
+    if cfg.gridtracker_forward_enabled:
+        fanout = UdpFanout(cfg.gridtracker_forward_host, cfg.gridtracker_forward_port)
+        e.attach_fanout(fanout)
+
+    t = UdpTransport(
+        cfg.listen_host,
+        cfg.listen_port,
+        e.on_message,
+        raw_callback=fanout.forward if fanout else None,
+        multicast_group=cfg.multicast_group,
+    )
     e.attach_transport(t)
+
     relay = None
     if cfg.relay_enabled:
         relay = UdpRelay(cfg.relay_listen_host, cfg.relay_listen_port, cfg.wrl_forward_host, cfg.wrl_forward_port,
                          cfg.relay_forward_wsjt, cfg.relay_forward_adif, cfg.relay_forward_unknown)
         e.attach_relay(relay)
+
     d = Dashboard(e, cfg.dashboard_host, cfg.dashboard_port)
     try:
-        t.start();
-        if relay: relay.start()
+        if fanout:
+            fanout.start()
+        t.start()
+        if relay:
+            relay.start()
         d.start()
         url = f"http://{cfg.dashboard_host}:{cfg.dashboard_port}/"
         logging.info("Dashboard: %s", url)
@@ -89,9 +106,12 @@ def main(argv=None):
             e.set_armed(False)
         except Exception:
             pass
-        d.stop();
-        if relay: relay.stop()
+        d.stop()
+        if relay:
+            relay.stop()
         t.stop()
+        if fanout:
+            fanout.stop()
     return 0
 
 
