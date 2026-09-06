@@ -15,7 +15,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole `
   --name DXWeaver `
   --paths src `
   --collect-data autoft8 `
-  src/autoft8/__main__.py
+  scripts/dxweaver_launcher.py
 
 $IsccCandidates = @(
   "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
