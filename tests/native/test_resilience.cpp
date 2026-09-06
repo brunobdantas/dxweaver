@@ -56,17 +56,34 @@ TEST(Resilience, Ft8DecisionWindowsAreExact) {
 }
 
 TEST(Resilience, RealtimeClockDomainContinuesWhileUiThreadIsStalled) {
+    // This test verifies the concurrency invariant, not Windows timer quantum.
+    // A previous version used sleep_for(1 ms) and therefore measured the hosted
+    // runner's scheduler granularity instead of whether the realtime domain was
+    // independent of a stalled UI thread.
+    std::atomic<bool> started{false};
     std::atomic<bool> stop{false};
-    std::atomic<int> audioTicks{0};
+    std::atomic<unsigned long long> realtimeProgress{0};
+
     std::thread realtime([&] {
+        started.store(true, std::memory_order_release);
         while (!stop.load(std::memory_order_relaxed)) {
-            ++audioTicks;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            realtimeProgress.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::yield();
         }
     });
 
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    const auto before = realtimeProgress.load(std::memory_order_relaxed);
+
+    // Simulate a badly stalled render/UI thread. The realtime worker must make
+    // forward progress independently while this thread does no work at all.
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    const auto after = realtimeProgress.load(std::memory_order_relaxed);
+
     stop.store(true, std::memory_order_relaxed);
     realtime.join();
-    EXPECT_GT(audioTicks.load(), 50);
+
+    EXPECT_GT(after, before);
+    EXPECT_GT(after - before, 100ULL)
+        << "realtime worker did not make meaningful progress during UI stall";
 }
