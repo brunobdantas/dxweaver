@@ -21,9 +21,6 @@ def test_engine_calls_best_candidate():
 
 
 def test_dashboard_arm_switches_assist_to_auto():
-    from autoft8.config import Config
-    from autoft8.adif import History
-    from autoft8.engine import Engine
     cfg = Config(mode="assist")
     e = Engine(cfg, History())
     e.set_armed(True)
@@ -35,9 +32,6 @@ def test_dashboard_arm_switches_assist_to_auto():
 
 
 def test_runtime_strategy_and_limits():
-    from autoft8.config import Config
-    from autoft8.adif import History
-    from autoft8.engine import Engine
     e = Engine(Config(), History())
     e.set_strategy("answer")
     e.set_limits(12, 55)
@@ -45,3 +39,18 @@ def test_runtime_strategy_and_limits():
     assert s["operating_strategy"] == "answer"
     assert s["limits"]["per_hour"] == 12
     assert s["limits"]["per_session"] == 55
+
+
+def test_engine_accepts_fanout_attachment_and_exposes_it():
+    class FakeFanout:
+        def snapshot(self):
+            return {"enabled": True, "forward": "127.0.0.1:2238", "forwarded": 0}
+
+    e = Engine(Config(), History())
+    f = FakeFanout()
+    e.attach_fanout(f)
+    assert e.fanout is f
+    state = e.snapshot()
+    assert state["fanout"]["enabled"] is True
+    assert state["fanout"]["forward"] == "127.0.0.1:2238"
+    assert state["version"] == "0.3.2"
