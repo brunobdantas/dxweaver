@@ -1,0 +1,110 @@
+name: DXWeaver Native Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "CMakeLists.txt"
+      - "src/native/**"
+      - "tests/native/**"
+      - "mshv/apply_dxweaver_v050_patch.py"
+      - "scripts/build_windows.ps1"
+      - "installer/DXWeaver-0.5.0.iss"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish/update v0.5.0 GitHub Release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dxweaver-native-050-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: windows-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout DXWeaver
+        uses: actions/checkout@v7
+
+      - name: Set up Python for fail-closed source patching
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Qt 5.15.2 and MinGW 8.1
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_mingw81"
+          tools: "tools_mingw,qt.tools.win64_mingw810"
+          cache: true
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          cmake --version
+          if ($LASTEXITCODE -ne 0) { throw "CMake unavailable" }
+          (Get-Command qmake.exe -ErrorAction Stop).Source
+          (Get-Command mingw32-make.exe -ErrorAction Stop).Source
+          (Get-Command g++.exe -ErrorAction Stop).Source
+          (Get-Command windeployqt.exe -ErrorAction Stop).Source
+
+      - name: Native Release build, exhaustive QA and installer
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+
+      - name: Upload official Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DXWeaver-0.5.0-Windows
+          path: |
+            installer-output/DXWeaver-0.5.0-Setup.exe
+            installer-output/DXWeaver-0.5.0-SHA256.txt
+            installer-output/DXWeaver-0.5.0-Source.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish v0.5.0 Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.5.0
+          target_commitish: ${{ github.sha }}
+          name: DXWeaver v0.5.0 Native
+          body: |
+            DXWeaver v0.5.0 — first unified native architecture.
+
+            Safety/QA gates:
+            - in-process dxw:: QSO state machine; no UDP control dependency for automation;
+            - directed caller preemption only while a HUNT target is unanswered;
+            - engaged QSO lock through report/R-report/RR73/73;
+            - fail-safe abort/cooldown when the active HUNT target works a third party;
+            - CAT-loss simulation forces HALT + FAULT + DISARM;
+            - resilient history-provider fallback for locked/corrupt HRD data;
+            - 120-candidate scoring performance gate under 5 ms per batch;
+            - exact FT8 decision windows at 02/17/32/47 UTC seconds;
+            - packaged GUI smoke test before installer creation.
+
+            The radio/DSP foundation is a GPL-3.0 derivative of official MSHV source at the pinned commit recorded in the source bundle. Required license/source notices are included.
+          files: |
+            installer-output/DXWeaver-0.5.0-Setup.exe
+            installer-output/DXWeaver-0.5.0-SHA256.txt
+            installer-output/DXWeaver-0.5.0-Source.zip
+          fail_on_unmatched_files: true
+          overwrite_files: true
