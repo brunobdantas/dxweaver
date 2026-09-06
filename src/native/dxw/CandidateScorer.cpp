@@ -1,7 +1,16 @@
 #include "CandidateScorer.h"
+#include <algorithm>
 #include <cmath>
 
 namespace dxw {
+namespace {
+
+template <typename T>
+T clampValue(T value, T low, T high) {
+    return std::max(low, std::min(value, high));
+}
+
+} // namespace
 
 CandidateScorer::CandidateScorer(ScoreWeights weights) : weights_(weights) {}
 
@@ -16,10 +25,11 @@ ScoreBreakdown CandidateScorer::score(const Candidate& c) const noexcept {
     s.watchlist = c.watchlist ? weights_.watchlist : 0;
     s.unconfirmed = (!c.confirmed && c.worked) ? weights_.unconfirmed : 0;
 
-    const int normalizedSnr = std::clamp(c.snr + 30, 0, 50);
+    const int normalizedSnr = clampValue(c.snr + 30, 0, 50);
     s.snr = normalizedSnr * weights_.snrPerDb;
 
-    const int distanceBuckets = static_cast<int>(std::clamp(c.distanceKm / 1000.0, 0.0, 20.0));
+    const double normalizedDistance = clampValue(c.distanceKm / 1000.0, 0.0, 20.0);
+    const int distanceBuckets = static_cast<int>(normalizedDistance);
     s.distance = distanceBuckets * weights_.distancePer1000Km;
 
     s.workedPenalty = (c.worked && c.confirmed) ? weights_.workedPenalty : 0;
