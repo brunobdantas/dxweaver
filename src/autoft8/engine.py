@@ -5,7 +5,7 @@ import time
 from collections import deque
 from .config import Config
 from .adif import History
-from .ft8 import candidate_from_decode, band_from_hz
+from .ft8 import candidate_from_decode, band_from_hz, parse_directed_to_me
 from .scoring import eligible, score
 from .cty import CtyResolver
 from . import protocol
@@ -26,14 +26,23 @@ class Engine:
         self.source_addr = None
         self.candidates: dict[tuple[str, str, str, str], object] = {}
         self.selection_at = 0.0
+
+        # Explicit QSO state. active_kind is "cq" for a hunt we initiated and
+        # "caller" when we answered a station calling us. A hunt is considered
+        # engaged only after we decode a directed response from the target.
         self.active_call = ""
+        self.active_kind = ""
         self.active_since = 0.0
+        self.active_has_response = False
+        self.active_last_rx = 0.0
+
         self.last_action = ""
         self.last_error = ""
         self.cooldowns: dict[str, float] = {}
         self.qso_times: deque[float] = deque()
         self.session_qsos = 0
         self.qso_log: deque[dict] = deque(maxlen=100)
+        self.state_log: deque[dict] = deque(maxlen=50)
         self.connected_at = 0.0
         self.armed = cfg.mode == "auto"
         self.last_cq_activity = 0.0
@@ -48,16 +57,25 @@ class Engine:
         self.transport = t
 
     def attach_fanout(self, fanout):
-        """Attach optional GridTracker fanout telemetry.
-
-        Forwarding itself is performed directly by UdpTransport.raw_callback so
-        it remains byte-transparent and independent of FT8 parsing. Keeping the
-        reference here is only for diagnostics/dashboard compatibility.
-        """
         self.fanout = fanout
 
     def attach_relay(self, relay):
         self.relay = relay
+
+    def _event(self, text: str, now: float | None = None) -> None:
+        ts = time.time() if now is None else now
+        self.state_log.append({"time": ts, "event": text})
+        log.info("STATE %s", text)
+
+    def _clear_active(self, reason: str = "", now: float | None = None) -> None:
+        old = self.active_call
+        self.active_call = ""
+        self.active_kind = ""
+        self.active_since = 0.0
+        self.active_has_response = False
+        self.active_last_rx = 0.0
+        if reason:
+            self._event(f"release {old or '-'}: {reason}", now)
 
     def set_history_sources(self, reports) -> None:
         with self.lock:
@@ -109,8 +127,7 @@ class Engine:
         with self.lock:
             if self.transport and self.instance and self.source_addr:
                 self.transport.send(protocol.build_halt_tx(self.instance, True), self.source_addr)
-            self.active_call = ""
-            self.active_since = 0
+            self._clear_active("HALT TX")
             self.set_armed(False)
             self.last_action = "HALT TX + DISARM"
 
@@ -118,6 +135,31 @@ class Engine:
         txmsg = str(self.status.get("tx_message") or "").upper().strip()
         if txmsg.startswith("CQ ") and self.cfg.callsign in txmsg:
             self.last_cq_activity = now
+
+    def _strategy_accepts(self, kind: str) -> bool:
+        strategy = self.cfg.operating_strategy
+        if strategy == "hunt":
+            return kind == "cq"
+        if strategy == "answer":
+            return kind == "caller"
+        return kind in {"cq", "caller"}
+
+    def _mark_directed_activity(self, message: str, now: float) -> None:
+        directed = parse_directed_to_me(message, self.cfg.callsign)
+        if not directed:
+            return
+        sender, payload = directed
+        if self.active_call and sender == self.active_call:
+            first = not self.active_has_response
+            self.active_has_response = True
+            self.active_last_rx = now
+            if first:
+                self._event(f"engaged {sender}: inbound {payload or 'directed message'}", now)
+
+    def _caller_allowed_by_policy(self, now: float) -> bool:
+        if self.cfg.directed_call_policy == "always":
+            return True
+        return bool(self.last_cq_activity and now - self.last_cq_activity <= self.cfg.cq_response_window_sec)
 
     def on_message(self, msg, addr):
         now = time.time()
@@ -132,15 +174,19 @@ class Engine:
                 self._note_cq_status(now)
                 return
             if msg.type == protocol.DECODE:
+                raw_message = str(msg.fields.get("message") or "").strip().upper()
+                self._mark_directed_activity(raw_message, now)
+
                 c = candidate_from_decode(
                     msg.fields, msg.id or self.instance, addr,
                     self.status.get("dial_frequency"), self.cfg.callsign,
                 )
                 if not c:
                     return
-                if c.kind == "caller" and self.cfg.answer_directed_after_cq_only:
-                    if now - self.last_cq_activity > self.cfg.cq_response_window_sec:
-                        return
+                if not self._strategy_accepts(c.kind):
+                    return
+                if c.kind == "caller" and not self._caller_allowed_by_policy(now):
+                    return
                 if self.resolver:
                     entity = self.resolver.resolve(c.call)
                     if entity:
@@ -170,7 +216,8 @@ class Engine:
         if call and self.resolver:
             ent = self.resolver.resolve(call)
             if ent:
-                entity_name = ent.name; entity_prefix = ent.main_prefix
+                entity_name = ent.name
+                entity_prefix = ent.main_prefix
         if call:
             self.history.add(call, band, mode, grid, entity_name)
             self.session_history.add(call, band, mode, grid, entity_name)
@@ -183,8 +230,7 @@ class Engine:
             "report_sent": d.get("report_sent"), "report_received": d.get("report_received"),
         }
         self.qso_log.append(entry)
-        self.active_call = ""
-        self.active_since = 0
+        self._clear_active("QSO logged", now)
         self.last_action = f"QSO logged {call}"
         self.candidates.clear()
         log.info("QSO logged: %s %s %s", call, band, mode)
@@ -198,7 +244,7 @@ class Engine:
             return False, "session QSO limit"
         return True, ""
 
-    def _radio_idle(self) -> tuple[bool, str]:
+    def _radio_idle(self, allow_existing_dx: bool = False) -> tuple[bool, str]:
         if not self.status:
             return False, "no Status"
         sop = str(self.status.get("special_operation_mode") or "NONE").upper()
@@ -207,44 +253,93 @@ class Engine:
         if self.status.get("transmitting"):
             return False, "transmitting"
         dx = str(self.status.get("dx_call") or "").strip().upper()
-        if dx and not self.active_call:
+        if dx and not self.active_call and not allow_existing_dx:
             return False, f"operator QSO with {dx}"
         return True, ""
+
+    def _rank_candidates(self):
+        # In ANSWER/BOTH, a direct caller always outranks opportunistic hunt CQs.
+        # Score and SNR remain the tie-breakers among candidates of the same kind.
+        prefer_caller = self.cfg.operating_strategy in {"answer", "both"}
+        return sorted(
+            self.candidates.values(),
+            key=lambda c: (1 if prefer_caller and c.kind == "caller" else 0, c.score, c.snr),
+            reverse=True,
+        )
+
+    def _can_preempt_for(self, candidate) -> bool:
+        return bool(
+            self.cfg.preempt_hunt_for_caller
+            and self.active_call
+            and self.active_kind == "cq"
+            and not self.active_has_response
+            and candidate.kind == "caller"
+            and candidate.call != self.active_call
+        )
+
+    def _active_timeout(self) -> int:
+        if self.active_kind == "cq" and not self.active_has_response:
+            return self.cfg.hunt_no_response_timeout_sec
+        return self.cfg.qso_timeout_sec
 
     def tick(self):
         now = time.time()
         with self.lock:
-            if self.active_call and now - self.active_since > self.cfg.qso_timeout_sec:
+            if self.active_call and now - self.active_since > self._active_timeout():
                 call = self.active_call
                 self.cooldowns[call] = now + self.cfg.failure_cooldown_sec
                 if self.cfg.halt_on_timeout and self.transport and self.instance and self.source_addr:
                     self.transport.send(protocol.build_halt_tx(self.instance, True), self.source_addr)
-                self.active_call = ""
-                self.active_since = 0
-                self.last_action = f"timeout {call}"
-                log.warning("QSO timeout %s", call)
-            if not self.candidates or now < self.selection_at or self.active_call:
+                why = "no response" if self.active_kind == "cq" and not self.active_has_response else "QSO timeout"
+                self._clear_active(why, now)
+                self.last_action = f"timeout {call}: {why}"
+                log.warning("QSO timeout %s (%s)", call, why)
+
+            if not self.candidates or now < self.selection_at:
                 return
-            ranked = sorted(self.candidates.values(), key=lambda c: (c.score, c.snr), reverse=True)
+
+            ranked = self._rank_candidates()
             self.last_cycle_candidates = [c.json() for c in ranked[:30]]
-            self.candidates.clear()
             if not ranked:
+                self.candidates.clear()
                 return
             best = ranked[0]
+
+            # If a QSO is already active, only an explicit caller may preempt an
+            # unanswered hunt attempt. Never switch once the hunted target has
+            # answered us; MSHV Auto Seq owns the live exchange from then on.
+            preempting = False
+            if self.active_call:
+                if not self._can_preempt_for(best):
+                    self.candidates.clear()
+                    return
+                if self.status.get("transmitting"):
+                    # Keep the caller queued until we are back in RX. Do not
+                    # alter an in-progress transmit period.
+                    self.selection_at = now + 0.2
+                    return
+                old = self.active_call
+                self.cooldowns[old] = now + self.cfg.failure_cooldown_sec
+                self._clear_active(f"preempted by directed caller {best.call}", now)
+                preempting = True
+
+            self.candidates.clear()
             self.selected_candidate = best.json()
             self.selected_at = now
             self.last_action = f"best {best.call} score={best.score:.0f}"
+
             if self.cfg.mode == "monitor":
                 return
             if self.cfg.mode == "assist" or not self.armed:
                 log.info("ASSIST best candidate: %s score %.0f (%s)", best.call, best.score, ", ".join(best.reasons))
                 return
+
             ok, why = self._limits_ok(now)
             if not ok:
                 self.last_action = why
                 self.set_armed(False)
                 return
-            ok, why = self._radio_idle()
+            ok, why = self._radio_idle(allow_existing_dx=preempting)
             if not ok:
                 self.last_action = f"not calling: {why}"
                 return
@@ -254,19 +349,27 @@ class Engine:
                 self.last_action = f"DRY RUN would call {best.call}"
                 log.info(self.last_action)
                 return
+
             self.transport.send(protocol.build_reply(best.instance, best.decode), best.source_addr)
             self.active_call = best.call
+            self.active_kind = best.kind
             self.active_since = now
+            # A caller candidate is already a decoded directed message to us,
+            # therefore that QSO is engaged from the moment we answer it.
+            self.active_has_response = best.kind == "caller"
+            self.active_last_rx = now if best.kind == "caller" else 0.0
             self.cooldowns[best.call] = now + self.cfg.failure_cooldown_sec
-            self.last_action = f"CALL {best.call} score={best.score:.0f} ({best.kind})"
-            log.warning("AUTO CALL %s score %.0f kind=%s", best.call, best.score, best.kind)
+            prefix = "ANSWER" if best.kind == "caller" else "CALL"
+            self.last_action = f"{prefix} {best.call} score={best.score:.0f} ({best.kind})"
+            self._event(f"{prefix.lower()} {best.call}", now)
+            log.warning("AUTO %s %s score %.0f kind=%s", prefix, best.call, best.score, best.kind)
 
     def snapshot(self) -> dict:
         with self.lock:
             cs = sorted(self.candidates.values(), key=lambda c: c.score, reverse=True)[:30]
             now = time.time()
             return {
-                "version": "0.3.2",
+                "version": "0.3.3",
                 "armed": self.armed,
                 "mode": self.cfg.mode,
                 "operating_strategy": self.cfg.operating_strategy,
@@ -274,7 +377,10 @@ class Engine:
                 "source_addr": self.source_addr,
                 "status": self.status,
                 "active_call": self.active_call,
+                "active_kind": self.active_kind,
+                "active_has_response": self.active_has_response,
                 "active_for": round(now - self.active_since, 1) if self.active_since else 0,
+                "active_last_rx_age": round(now - self.active_last_rx, 1) if self.active_last_rx else None,
                 "session_qsos": self.session_qsos,
                 "hour_qsos": len([x for x in self.qso_times if x >= now - 3600]),
                 "history_qsos": self.history.count,
@@ -289,6 +395,7 @@ class Engine:
                 "selected_age": round(now - self.selected_at, 1) if self.selected_at else None,
                 "last_action": self.last_action,
                 "last_error": self.last_error,
+                "state_log": list(self.state_log)[-20:],
                 "qso_log": list(self.qso_log)[-20:],
                 "transport": self.transport.snapshot() if self.transport and hasattr(self.transport, "snapshot") else {},
                 "fanout": self.fanout.snapshot() if self.fanout and hasattr(self.fanout, "snapshot") else {"enabled": False},
@@ -297,11 +404,18 @@ class Engine:
                     "per_hour": self.cfg.max_qsos_per_hour,
                     "per_session": self.cfg.max_qsos_per_session,
                     "qso_timeout_sec": self.cfg.qso_timeout_sec,
+                    "hunt_no_response_timeout_sec": self.cfg.hunt_no_response_timeout_sec,
+                },
+                "decision_policy": {
+                    "directed_call_policy": self.cfg.directed_call_policy,
+                    "preempt_hunt_for_caller": self.cfg.preempt_hunt_for_caller,
                 },
                 "capabilities": {
                     "native_udp_reply": True,
                     "hunt_and_pounce": True,
                     "auto_answer_after_cq": True,
+                    "directed_caller_preemption": True,
+                    "qso_state_lock": True,
                     "auto_cq_start": False,
                     "auto_cq_reason": "Standard WSJT-X/MSHV UDP protocol has no native Enable-Tx/CQ-start command",
                 },
