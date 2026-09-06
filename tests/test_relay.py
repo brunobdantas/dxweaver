@@ -1,6 +1,7 @@
 import socket
 import time
 from autoft8.transport import UdpRelay
+from autoft8.fanout import UdpFanout
 from autoft8 import protocol
 
 
@@ -64,9 +65,25 @@ def test_relay_drops_unknown_by_default():
 
 
 def test_relay_snapshot_exposes_telemetry_fields():
-    from autoft8.transport import UdpRelay
     r = UdpRelay("127.0.0.1", 31001, "127.0.0.1", 31002)
     s = r.snapshot()
     assert s["enabled"] is True
     assert "latency_ms_avg" in s
     assert "jitter_ms" in s
+
+
+def test_fanout_sends_primary_mshv_stream_to_gridtracker_unchanged():
+    out_port = free_udp_port()
+    sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sink.bind(("127.0.0.1", out_port))
+    f = UdpFanout("127.0.0.1", out_port)
+    f.start()
+    try:
+        packet = protocol.build_heartbeat("MSHV", version="2.76")
+        f.forward(packet, ("127.0.0.1", 2237))
+        assert recv_one(sink) == packet
+        st = f.snapshot()
+        assert st["forwarded"] == 1
+        assert st["forward"] == f"127.0.0.1:{out_port}"
+    finally:
+        f.stop(); sink.close()
