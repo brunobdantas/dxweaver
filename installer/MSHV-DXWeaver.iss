@@ -1,5 +1,5 @@
 #define MyAppName "MSHV-DXWeaver"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.4.1"
 #define MyAppPublisher "DXWeaver / PU2BRU"
 #define MyAppExeName "MSHV-DXWeaver.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\installer-output-mshv
-OutputBaseFilename=MSHV-DXWeaver-0.4.0-Setup
+OutputBaseFilename=MSHV-DXWeaver-0.4.1-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -32,9 +32,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Criar atalho na Área de Trabalho"; GroupDescription: "Atalhos:"; Flags: unchecked
 
 [Files]
-; Runtime and application files. Existing user settings are deliberately preserved.
 Source: "..\mshv-package\*"; DestDir: "{app}"; Excludes: "settings\*"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Do not distribute bundled font files. MSHV falls back to installed system fonts.
 Source: "..\mshv-package\settings\*"; DestDir: "{app}\settings"; Excludes: "resources\font\*"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
 [Icons]
