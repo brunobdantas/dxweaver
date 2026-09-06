@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QSqlError>
 
 #include "../dxw/HistoryIndex.h"
 
