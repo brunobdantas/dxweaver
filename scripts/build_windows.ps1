@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$Version = "0.3.5"
+$Version = "0.4.0"
 Write-Host "== DXWeaver $Version Windows build ==" -ForegroundColor Cyan
 
 python -m pip install --upgrade pip setuptools wheel
@@ -21,7 +21,6 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole `
   scripts/dxweaver_launcher.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
-# Smoke-test the actual standalone binary before wrapping it in an installer.
 & ".\dist\DXWeaver.exe" --config "config.example.json" --self-test
 if ($LASTEXITCODE -ne 0) { throw "DXWeaver.exe self-test failed with exit code $LASTEXITCODE" }
 
@@ -34,11 +33,7 @@ $IsccCandidates = @(
 ) | Where-Object { $_ -and (Test-Path $_) }
 $Iscc = $IsccCandidates | Select-Object -First 1
 if (-not $Iscc) {
-  $SearchRoots = @(
-    "${env:ProgramFiles(x86)}",
-    "$env:ProgramFiles",
-    "$env:ChocolateyInstall"
-  ) | Where-Object { $_ -and (Test-Path $_) }
+  $SearchRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyInstall") | Where-Object { $_ -and (Test-Path $_) }
   foreach ($RootPath in $SearchRoots) {
     $Found = Get-ChildItem -Path $RootPath -Filter "ISCC.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($Found) { $Iscc = $Found.FullName; break }
