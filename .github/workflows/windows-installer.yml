@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "Publish/update the v0.3.2 GitHub Release"
+        description: "Publish/update the v0.3.3 GitHub Release"
         type: boolean
         default: false
   push:
@@ -45,9 +45,9 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DXWeaver-0.3.2-Windows
+          name: DXWeaver-0.3.3-Windows
           path: |
-            installer-output/DXWeaver-0.3.2-Setup.exe
+            installer-output/DXWeaver-0.3.3-Setup.exe
             installer-output/SHA256.txt
           if-no-files-found: error
           retention-days: 30
@@ -56,18 +56,24 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.2
+          tag_name: v0.3.3
           target_commitish: ${{ github.sha }}
-          name: DXWeaver v0.3.2
+          name: DXWeaver v0.3.3
           body: |
-            DXWeaver v0.3.2 Windows standalone installer.
+            DXWeaver v0.3.3 Windows standalone installer.
 
-            Fixes startup regression in v0.3.1 caused by a missing Engine.attach_fanout method.
-            Keeps the single-listener UDP topology:
+            On-air QSO state-machine hardening:
+            - direct callers outrank hunt CQs in BOTH/ANSWER;
+            - a direct caller may preempt an unanswered hunt attempt;
+            - once the hunted station replies, the QSO is LOCKED and cannot be stolen mid exchange;
+            - HUNT / ANSWER / BOTH are now enforced by the decision engine;
+            - unanswered hunts use a shorter timeout;
+            - explicit calls to our callsign are accepted even outside the old post-CQ window by default.
+
+            Single-listener UDP topology remains:
             MSHV -> DXWeaver :2237 -> GridTracker :2238 -> DXWeaver relay :2239 -> WRL :2240.
-            Adds a regression test for fanout attachment/telemetry.
           files: |
-            installer-output/DXWeaver-0.3.2-Setup.exe
+            installer-output/DXWeaver-0.3.3-Setup.exe
             installer-output/SHA256.txt
           fail_on_unmatched_files: true
           overwrite_files: true
