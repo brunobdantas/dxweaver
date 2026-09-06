@@ -82,6 +82,10 @@ bool CtyResolver::load(const std::string& path) {
     std::string logical;
     std::string line;
     while (std::getline(in, line)) {
+        // cty.dat is commonly CRLF on Windows. Binary input deliberately avoids
+        // locale/text transformations, so strip the retained carriage return
+        // before checking the semicolon that terminates a CTY logical record.
+        if (!line.empty() && line[line.size() - 1] == '\r') line.erase(line.size() - 1);
         logical += line;
         if (logical.empty() || logical[logical.size() - 1] != ';') continue;
         logical.erase(logical.size() - 1);
