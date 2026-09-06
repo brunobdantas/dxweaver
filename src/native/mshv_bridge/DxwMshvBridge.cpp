@@ -1,12 +1,28 @@
 #include "DxwMshvBridge.h"
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QRegularExpression>
 #include <algorithm>
 
 namespace dxw {
 
-DxwMshvBridge::DxwMshvBridge(QString myCall, QObject* parent)
-    : QObject(parent), myCall_(myCall.trimmed().toUpper()), sm_(myCall_.toStdString()) {
+DxwMshvBridge::DxwMshvBridge(QString myCall,
+                             QString myGrid,
+                             QString band,
+                             QString appPath,
+                             QObject* parent)
+    : QObject(parent),
+      myCall_(myCall.trimmed().toUpper()),
+      myGrid_(myGrid.trimmed().toUpper()),
+      band_(band.trimmed().toLower()),
+      appPath_(appPath),
+      sm_(myCall_.toStdString(), myGrid_.toStdString()),
+      history_(appPath_) {
+    const QString ctyPath = QDir(QCoreApplication::applicationDirPath()).filePath("settings/database/cty.dat");
+    cty_.load(ctyPath.toStdString());
+    history_.reload();
+
     clock_.setTimerType(Qt::PreciseTimer);
     clock_.setInterval(50);
     connect(&clock_, SIGNAL(timeout()), this, SLOT(onClock()));
@@ -36,24 +52,63 @@ ExchangeStage DxwMshvBridge::exchangeStage(const QString& token) {
 }
 
 QString DxwMshvBridge::findCqCall(const QStringList& tokens) {
-    if (tokens.isEmpty() || tokens.at(0).toUpper() != "CQ") return {};
+    if (tokens.isEmpty() || tokens.at(0).toUpper() != "CQ") return QString();
     for (int i = 1; i < tokens.size(); ++i) {
         const QString t = tokens.at(i).toUpper();
         if (looksLikeCall(t)) return t;
     }
-    return {};
+    return QString();
 }
 
-Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString& call) const {
+Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString& call) {
     Candidate c;
-    c.call = call.toStdString();
+    c.call = call.toUpper().toStdString();
     c.mode = "FT8";
+    c.band = band_.toStdString();
+
     bool ok = false;
     c.snr = decode.value(1).toInt(&ok);
     if (!ok) c.snr = -30;
+
     const QStringList tokens = decode.value(4).simplified().toUpper().split(' ', Qt::SkipEmptyParts);
     if (!tokens.isEmpty() && looksLikeGrid(tokens.last())) c.grid = tokens.last().toStdString();
-    const auto it = cooldowns_.constFind(call);
+
+    CtyEntity entity;
+    if (cty_.resolve(c.call, entity)) {
+        c.entity = entity.country;
+        c.continent = entity.continent;
+        c.cqZone = entity.cqZone;
+        c.ituZone = entity.ituZone;
+    }
+
+    const QString remoteGrid = QString::fromStdString(c.grid).toUpper();
+    if (!myGrid_.isEmpty() && !remoteGrid.isEmpty() &&
+        qth_.isValidLocator(myGrid_) && qth_.isValidLocator(remoteGrid)) {
+        const double myLon = qth_.getLon(myGrid_);
+        const double myLat = qth_.getLat(myGrid_);
+        const double dxLon = qth_.getLon(remoteGrid);
+        const double dxLat = qth_.getLat(remoteGrid);
+        c.distanceKm = qth_.getDistanceKilometres(myLon, myLat, dxLon, dxLat);
+        c.azimuthDeg = qth_.getBeam(myLon, myLat, dxLon, dxLat);
+    }
+
+    if (history_.available()) {
+        const HistoryFacts facts = history_.lookup(c.call, c.band, c.mode, c.entity);
+        c.worked = facts.worked;
+        c.confirmed = facts.confirmed;
+        if (!c.entity.empty()) {
+            c.newDxcc = !facts.entityWorked;
+            c.newBand = !c.band.empty() && !facts.entityBandWorked;
+            c.newMode = !facts.entityModeWorked;
+            c.newSlot = !c.band.empty() && !facts.entitySlotWorked;
+        } else {
+            c.newBand = !c.band.empty() && !facts.workedBand;
+            c.newMode = !facts.workedMode;
+            c.newSlot = !c.band.empty() && !facts.workedSlot;
+        }
+    }
+
+    const QHash<QString, QDateTime>::const_iterator it = cooldowns_.constFind(call.toUpper());
     c.cooldownActive = (it != cooldowns_.constEnd() && it.value() > QDateTime::currentDateTimeUtc());
     return c;
 }
@@ -61,19 +116,19 @@ Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString&
 bool DxwMshvBridge::runnerUp(const QString& excluding, Candidate& result) const {
     std::vector<Candidate> pool;
     pool.reserve(static_cast<std::size_t>(candidates_.size()));
-    for (const auto& c : candidates_) {
-        if (QString::fromStdString(c.call) != excluding) pool.push_back(c);
+    for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it) {
+        if (QString::fromStdString(it->call) != excluding) pool.push_back(*it);
     }
-    const auto ranked = scorer_.rank(pool);
+    const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
     if (ranked.empty()) return false;
     result = ranked.front().candidate;
     return true;
 }
 
 void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
-    for (const auto& action : actions) {
-        const QString call = QString::fromStdString(action.call);
-        switch (action.type) {
+    for (std::vector<Action>::const_iterator it = actions.begin(); it != actions.end(); ++it) {
+        const QString call = QString::fromStdString(it->call);
+        switch (it->type) {
         case ActionType::HaltTx:
             emit haltTxRequested();
             break;
@@ -107,6 +162,27 @@ void DxwMshvBridge::emitState() {
     emit stateChanged(state, QString::fromStdString(sm_.activeCall()), candidates_.size());
 }
 
+void DxwMshvBridge::setStationIdentity(QString call, QString grid) {
+    call = call.trimmed().toUpper();
+    grid = grid.trimmed().toUpper();
+    const std::vector<Action> actions = sm_.updateStationIdentity(call.toStdString(), grid.toStdString());
+    myCall_ = call;
+    myGrid_ = grid;
+    candidates_.clear();
+    rawByCall_.clear();
+    if (!actions.empty()) processActions(actions);
+    else emitState();
+}
+
+void DxwMshvBridge::setBand(QString band) {
+    band = band.trimmed().toLower();
+    if (band == band_) return;
+    band_ = band;
+    candidates_.clear();
+    rawByCall_.clear();
+    emitState();
+}
+
 void DxwMshvBridge::setArmed(bool armed) {
     if (armed) processActions(sm_.arm(strategy_));
     else processActions(sm_.disarm("DXWeaver DISARM"));
@@ -130,6 +206,7 @@ void DxwMshvBridge::onQsoLogged(QStringList) {
     if (!active.empty()) processActions(sm_.onQsoLogged(active));
     candidates_.clear();
     rawByCall_.clear();
+    history_.reload();
 }
 
 void DxwMshvBridge::onDecode(QStringList decode) {
@@ -170,9 +247,9 @@ void DxwMshvBridge::onDecode(QStringList decode) {
     rawByCall_.insert(cqCall, decode);
 
     bool replaced = false;
-    for (auto& existing : candidates_) {
-        if (QString::fromStdString(existing.call) == cqCall) {
-            if (c.snr > existing.snr) existing = c;
+    for (QVector<Candidate>::iterator it = candidates_.begin(); it != candidates_.end(); ++it) {
+        if (QString::fromStdString(it->call) == cqCall) {
+            if (c.snr > it->snr) *it = c;
             replaced = true;
             break;
         }
@@ -190,8 +267,9 @@ void DxwMshvBridge::onClock() {
 
     std::vector<Candidate> pool;
     pool.reserve(static_cast<std::size_t>(candidates_.size()));
-    for (const auto& c : candidates_) pool.push_back(c);
-    const auto ranked = scorer_.rank(pool);
+    for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it)
+        pool.push_back(*it);
+    const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
     if (!ranked.empty()) processActions(sm_.startHunt(ranked.front().candidate));
     candidates_.clear();
 }
