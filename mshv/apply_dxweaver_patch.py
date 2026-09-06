@@ -118,6 +118,12 @@ def apply(root: Path) -> None:
 
     replace_once(
         net_h,
+        "    void SendOtpCheck(QString s);\n",
+        "    void SendOtpCheck(QString s);\n    void SetDxwActualState(bool,bool,bool); // actual AUTO, AutoSeq, MultiAnswerStd\n",
+        "RadioAndNetW actual-state method declaration",
+    )
+    replace_once(
+        net_h,
         "    void EmitUdpConfigure(int);//2.76.7\n",
         "    void EmitUdpConfigure(int);//2.76.7\n    void EmitDxwAutomation(bool,bool,bool); // DXWeaver: AUTO, AutoSeq, MultiAnswerStd\n",
         "RadioAndNetW native automation signal",
@@ -143,20 +149,29 @@ void RadioAndNetW::set_halt_tx(bool f)
 """
     new_config_tail = """    // DXWeaver extension is independent of mode changes. Run it before the
     // ordinary imode<0 return because the controller normally sends empty mode.
+    // Do NOT acknowledge the requested values here. Main_Ms applies them first
+    // and calls SetDxwActualState() with the values read back from MSHV.
     if (l.count() >= 6 && l.at(2)=="DXW1")
     {
         bool dxw_auto = l.at(3).toInt();
-        s_dxw_auto_seq = l.at(4).toInt();
-        s_dxw_multi_std = l.at(5).toInt();
-        emit EmitDxwAutomation(dxw_auto,s_dxw_auto_seq,s_dxw_multi_std);
-        SendStatus(0);
+        bool dxw_auto_seq = l.at(4).toInt();
+        bool dxw_multi_std = l.at(5).toInt();
+        emit EmitDxwAutomation(dxw_auto,dxw_auto_seq,dxw_multi_std);
     }
     if (imode<0) return;  //qDebug()<<" OUT="<<imode<<" - "<<m<<sm;\tqDebug()<<"-----------------";
 \temit EmitUdpConfigure(imode);
 }
+void RadioAndNetW::SetDxwActualState(bool auto_enabled,bool auto_seq,bool multi_std)
+{
+    // These are actual values read back after Main_Ms has applied the request.
+    s_auto = auto_enabled;
+    s_dxw_auto_seq = auto_seq;
+    s_dxw_multi_std = multi_std;
+    SendStatus(0);
+}
 void RadioAndNetW::set_halt_tx(bool f)
 """
-    replace_once(net_cpp, old_config_tail, new_config_tail, "RadioAndNetW Configure native dispatch")
+    replace_once(net_cpp, old_config_tail, new_config_tail, "RadioAndNetW actual-state acknowledgement")
 
     replace_once(
         tx_h,
@@ -187,6 +202,8 @@ bool HvLabAutoSeq::GetAutoSeq()
 """
     hvtxw_autoseq_replacement = """    void SetAutoSeqAll(QString);
     void SetDxwAutoSeq(bool);
+    bool GetDxwAutoSeq() { return AutoSeqLab->GetAutoSeq(); }
+    void SetDxwActualState(bool,bool,bool);
 
     QString GetDirectLogQso()
 """
@@ -194,7 +211,7 @@ bool HvLabAutoSeq::GetAutoSeq()
         tx_h,
         hvtxw_autoseq_anchor,
         hvtxw_autoseq_replacement,
-        "HvTxW native AutoSeq method declaration",
+        "HvTxW native AutoSeq/actual-state methods",
     )
     replace_once(
         tx_h,
@@ -213,9 +230,13 @@ bool HvLabAutoSeq::GetAutoSeq()
 {
     AutoSeqLab->SetAutoSeqState(enabled);
 }
+void HvTxW::SetDxwActualState(bool auto_enabled,bool auto_seq,bool multi_std)
+{
+    TRadioAndNetW->SetDxwActualState(auto_enabled,auto_seq,multi_std);
+}
 void HvTxW::AutoSeqLabPress()
 """
-    replace_once(tx_cpp, autoseq_press_anchor, autoseq_press_replacement, "HvTxW native AutoSeq setter")
+    replace_once(tx_cpp, autoseq_press_anchor, autoseq_press_replacement, "HvTxW native AutoSeq/actual-state bridge")
 
     replace_once(
         main_h,
@@ -237,10 +258,16 @@ void HvTxW::AutoSeqLabPress()
         Multi_answer_mod_std->setChecked(multi_std);
     if (THvTxW->GetAutoIsOn() != auto_enabled)
         THvTxW->auto_on();
+
+    // Report what MSHV actually became, not what DXWeaver requested.
+    THvTxW->SetDxwActualState(
+        THvTxW->GetAutoIsOn(),
+        THvTxW->GetDxwAutoSeq(),
+        Multi_answer_mod_std->isChecked());
 }
 void Main_Ms::SetMultiAnswerModStd(bool f)
 """
-    replace_once(main_cpp, main_std_anchor, main_std_replacement, "Main native automation implementation")
+    replace_once(main_cpp, main_std_anchor, main_std_replacement, "Main native actual-state implementation")
 
     print("DXWeaver native MSHV patch applied successfully")
 
