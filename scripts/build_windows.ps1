@@ -17,12 +17,31 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole `
   --collect-data autoft8 `
   scripts/dxweaver_launcher.py
 
+# Smoke-test the actual standalone binary before wrapping it in an installer.
+& ".\dist\DXWeaver.exe" --config "config.example.json" --self-test
+if ($LASTEXITCODE -ne 0) { throw "DXWeaver.exe self-test failed with exit code $LASTEXITCODE" }
+
+$IsccFromPath = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
 $IsccCandidates = @(
-  "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-  "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-)
-$Iscc = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+  $(if ($IsccFromPath) { $IsccFromPath.Source }),
+  "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+  "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+  "$env:ChocolateyInstall\bin\ISCC.exe"
+) | Where-Object { $_ -and (Test-Path $_) }
+$Iscc = $IsccCandidates | Select-Object -First 1
+if (-not $Iscc) {
+  $SearchRoots = @(
+    "${env:ProgramFiles(x86)}",
+    "$env:ProgramFiles",
+    "$env:ChocolateyInstall"
+  ) | Where-Object { $_ -and (Test-Path $_) }
+  foreach ($RootPath in $SearchRoots) {
+    $Found = Get-ChildItem -Path $RootPath -Filter "ISCC.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Found) { $Iscc = $Found.FullName; break }
+  }
+}
 if (-not $Iscc) { throw "Inno Setup 6 / ISCC.exe not found" }
+Write-Host "Using Inno Setup compiler: $Iscc" -ForegroundColor Cyan
 
 & $Iscc "installer\DXWeaver.iss"
 $Setup = "installer-output\DXWeaver-$Version-Setup.exe"
