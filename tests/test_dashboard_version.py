@@ -10,4 +10,4 @@ class FakeEngine:
 def test_dashboard_uses_canonical_package_version():
     state = dashboard_state(FakeEngine())
     assert state["version"] == __version__
-    assert state["version"] == "0.3.5"
+    assert state["version"] == "0.4.0"
