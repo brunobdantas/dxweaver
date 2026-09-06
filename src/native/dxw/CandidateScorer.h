@@ -24,8 +24,8 @@ class CandidateScorer final {
 public:
     explicit CandidateScorer(ScoreWeights weights = {});
 
-    [[nodiscard]] ScoreBreakdown score(const Candidate& candidate) const noexcept;
-    [[nodiscard]] std::vector<RankedCandidate> rank(const std::vector<Candidate>& candidates) const;
+    ScoreBreakdown score(const Candidate& candidate) const noexcept;
+    std::vector<RankedCandidate> rank(const std::vector<Candidate>& candidates) const;
 
 private:
     ScoreWeights weights_;
