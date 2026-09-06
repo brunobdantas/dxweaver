@@ -40,14 +40,15 @@ jobs:
           $sha = (git -C mshv-upstream rev-parse HEAD).Trim()
           if ($sha -ne "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf") { throw "unexpected MSHV commit $sha" }
 
-      - name: Validate and apply DXWeaver native patch
+      - name: Validate and apply DXWeaver native patches
         shell: pwsh
         run: |
-          python --version
-          python -m py_compile mshv/apply_dxweaver_patch.py
+          python -m py_compile mshv/apply_dxweaver_patch.py mshv/apply_dxweaver_runtime_fix.py
           if ($LASTEXITCODE -ne 0) { throw "MSHV patcher syntax validation failed" }
           python mshv/apply_dxweaver_patch.py mshv-upstream
-          if ($LASTEXITCODE -ne 0) { throw "DXWeaver MSHV patch failed" }
+          if ($LASTEXITCODE -ne 0) { throw "DXWeaver base MSHV patch failed" }
+          python mshv/apply_dxweaver_runtime_fix.py mshv-upstream
+          if ($LASTEXITCODE -ne 0) { throw "DXWeaver MSHV runtime hardening failed" }
           git -C mshv-upstream diff --check
           if ($LASTEXITCODE -ne 0) { throw "patched MSHV diff check failed" }
           git -C mshv-upstream diff --stat
@@ -67,11 +68,11 @@ jobs:
         shell: pwsh
         run: |
           $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
-          $mingwPath = (Get-Command mingw32-make.exe -ErrorAction Stop).Source
+          $make = (Get-Command mingw32-make.exe -ErrorAction Stop).Source
           "qmake=$qmake" >> $env:GITHUB_OUTPUT
-          "make=$mingwPath" >> $env:GITHUB_OUTPUT
+          "make=$make" >> $env:GITHUB_OUTPUT
           Write-Host "qmake=$qmake"
-          Write-Host "make=$mingwPath"
+          Write-Host "make=$make"
           Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
           Write-Host "QT_PLUGIN_PATH=$env:QT_PLUGIN_PATH"
 
@@ -84,187 +85,110 @@ jobs:
           & "${{ steps.mingw.outputs.make }}" -j2
           if ($LASTEXITCODE -ne 0) { throw "MinGW build failed with $LASTEXITCODE" }
           if (-not (Test-Path "bin/MSHV-DXWeaver.exe")) { throw "MSHV-DXWeaver.exe was not produced" }
-          $exe = Get-Item "bin/MSHV-DXWeaver.exe"
-          Write-Host "Built $($exe.FullName) ($($exe.Length) bytes)"
 
-      - name: Stage compiled MSHV tree
+      - name: Stage application and runtime
         shell: pwsh
         run: |
           $pkg = Join-Path $PWD "mshv-package"
           if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
           New-Item -ItemType Directory -Force $pkg | Out-Null
-          Copy-Item -Path "mshv-upstream/bin/*" -Destination $pkg -Recurse -Force
-          Remove-Item -Recurse -Force "$pkg/log" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "$pkg/AllTxtMonthly" -ErrorAction SilentlyContinue
-          if (-not (Test-Path "$pkg/MSHV-DXWeaver.exe")) { throw "staged MSHV-DXWeaver.exe is missing" }
-          Get-Item "$pkg/MSHV-DXWeaver.exe" | Format-List FullName,Length,LastWriteTime
+          Copy-Item "mshv-upstream/bin/*" $pkg -Recurse -Force
+          Remove-Item -Recurse -Force "$pkg/log","$pkg/AllTxtMonthly" -ErrorAction SilentlyContinue
+          Get-ChildItem $pkg -Recurse -File -Include *.ttf,*.otf,*.woff,*.woff2 -ErrorAction SilentlyContinue | Remove-Item -Force
 
-      - name: Upload raw compiled EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: MSHV-DXWeaver-0.4.0-Raw-EXE
-          path: mshv-package/MSHV-DXWeaver.exe
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Deploy Qt and MinGW runtime deterministically
-        shell: pwsh
-        run: |
-          $pkg = Join-Path $PWD "mshv-package"
           $qtBin = Join-Path $env:QT_ROOT_DIR "bin"
           $qtPlugins = $env:QT_PLUGIN_PATH
           $mingwBin = Split-Path -Parent "${{ steps.mingw.outputs.make }}"
-
-          $requiredQt = @(
-            "Qt5Core.dll",
-            "Qt5Gui.dll",
-            "Qt5Network.dll",
-            "Qt5WebSockets.dll",
-            "Qt5Widgets.dll"
-          )
-          foreach ($dll in $requiredQt) {
+          foreach ($dll in @("Qt5Core.dll","Qt5Gui.dll","Qt5Network.dll","Qt5WebSockets.dll","Qt5Widgets.dll")) {
             $src = Join-Path $qtBin $dll
             if (-not (Test-Path $src)) { throw "required Qt runtime missing: $src" }
             Copy-Item $src $pkg -Force
           }
-
-          $optionalQt = @("libEGL.dll", "libGLESv2.dll", "d3dcompiler_47.dll", "opengl32sw.dll")
-          foreach ($dll in $optionalQt) {
+          foreach ($dll in @("libEGL.dll","libGLESv2.dll","d3dcompiler_47.dll","opengl32sw.dll","Qt5Svg.dll")) {
             $src = Join-Path $qtBin $dll
             if (Test-Path $src) { Copy-Item $src $pkg -Force }
           }
-
-          $platformSrc = Join-Path $qtPlugins "platforms/qwindows.dll"
-          if (-not (Test-Path $platformSrc)) { throw "Qt platform plugin qwindows.dll missing: $platformSrc" }
           New-Item -ItemType Directory -Force "$pkg/platforms" | Out-Null
-          Copy-Item $platformSrc "$pkg/platforms/qwindows.dll" -Force
-
-          foreach ($pluginDir in @("styles", "imageformats")) {
+          $qwindows = Join-Path $qtPlugins "platforms/qwindows.dll"
+          if (-not (Test-Path $qwindows)) { throw "qwindows.dll missing" }
+          Copy-Item $qwindows "$pkg/platforms/qwindows.dll" -Force
+          foreach ($pluginDir in @("styles","imageformats")) {
             $srcDir = Join-Path $qtPlugins $pluginDir
-            if (Test-Path $srcDir) {
-              Copy-Item $srcDir "$pkg/$pluginDir" -Recurse -Force
-            }
+            if (Test-Path $srcDir) { Copy-Item $srcDir "$pkg/$pluginDir" -Recurse -Force }
           }
-
-          # Some image plugins use Qt5Svg; include it only when present.
-          $svg = Join-Path $qtBin "Qt5Svg.dll"
-          if (Test-Path $svg) { Copy-Item $svg $pkg -Force }
-
-          $runtimeDlls = @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")
-          foreach ($dll in $runtimeDlls) {
+          foreach ($dll in @("libgcc_s_seh-1.dll","libstdc++-6.dll","libwinpthread-1.dll")) {
             $src = Join-Path $mingwBin $dll
             if (-not (Test-Path $src)) { throw "required MinGW runtime missing: $src" }
             Copy-Item $src $pkg -Force
           }
-
-          $mustExist = @(
-            "$pkg/MSHV-DXWeaver.exe",
-            "$pkg/Qt5Core.dll",
-            "$pkg/Qt5Gui.dll",
-            "$pkg/Qt5Network.dll",
-            "$pkg/Qt5WebSockets.dll",
-            "$pkg/Qt5Widgets.dll",
-            "$pkg/platforms/qwindows.dll",
-            "$pkg/libgcc_s_seh-1.dll",
-            "$pkg/libstdc++-6.dll",
-            "$pkg/libwinpthread-1.dll"
-          )
-          foreach ($path in $mustExist) {
-            if (-not (Test-Path $path)) { throw "packaged runtime missing: $path" }
-          }
-          Get-ChildItem $pkg -Recurse -File | Sort-Object FullName | Select-Object FullName,Length | Format-Table -AutoSize
+          if (-not (Test-Path "$pkg/MSHV-DXWeaver.exe")) { throw "staged executable missing" }
 
       - name: Smoke-test packaged executable
         shell: pwsh
         run: |
           $pkg = Join-Path $PWD "mshv-package"
-          $exe = Join-Path $pkg "MSHV-DXWeaver.exe"
-          $p = Start-Process -FilePath $exe -WorkingDirectory $pkg -PassThru
+          $p = Start-Process -FilePath "$pkg/MSHV-DXWeaver.exe" -WorkingDirectory $pkg -PassThru
           Start-Sleep -Seconds 5
           if ($p.HasExited) {
-            if ($p.ExitCode -ne 0) { throw "packaged executable exited during smoke test with code $($p.ExitCode)" }
-            Write-Host "Executable exited normally during smoke test."
+            if ($p.ExitCode -ne 0) { throw "packaged executable exited with code $($p.ExitCode)" }
           } else {
-            Write-Host "Executable remained running for 5 seconds; Windows loader/runtime smoke test passed."
             Stop-Process -Id $p.Id -Force
           }
 
-      - name: Add GPL notices and patch source
+      - name: Add GPL notices and corresponding source
         shell: pwsh
         run: |
           Copy-Item "mshv-upstream/COPYING.txt" "mshv-package/COPYING-MSHV-GPL3.txt" -Force
           Copy-Item "mshv/apply_dxweaver_patch.py" "mshv-package/DXWeaver-MSHV-Patch-Source.py" -Force
+          Copy-Item "mshv/apply_dxweaver_runtime_fix.py" "mshv-package/DXWeaver-MSHV-Runtime-Fix-Source.py" -Force
           cmd /c "git -C mshv-upstream diff --binary > mshv-package\DXWeaver-MSHV-0.4.0.patch"
-          if ($LASTEXITCODE -ne 0) { throw "failed to export MSHV source patch" }
+          if ($LASTEXITCODE -ne 0) { throw "failed to export MSHV patch" }
           @"
-          MSHV-DXWeaver 0.4.0
+          MSHV-DXWeaver 0.4.0 hotfix build
           Official MSHV upstream: https://github.com/LZ2HV/MSHV
           Upstream commit: 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
           DXWeaver repository: https://github.com/brunobdantas/dxweaver
           MSHV derivative license: GPL-3.0
-
-          This package contains the patch source and GPL notice. A complete
-          corresponding patched source archive is published beside the Windows
-          runtime archive and installer by the same GitHub Actions run.
           "@ | Set-Content "mshv-package/UPSTREAM-DXWEAVER.txt" -Encoding UTF8
-          if (-not (Test-Path "mshv-package/DXWeaver-MSHV-0.4.0.patch")) { throw "patch source missing" }
 
-      - name: Create corresponding source archive
-        shell: pwsh
-        run: |
           git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" add -u
-          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" commit -m "DXWeaver 0.4.0 native control patch"
-          if ($LASTEXITCODE -ne 0) { throw "failed to commit patched source for archive" }
+          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" commit -m "DXWeaver 0.4.0 native control hotfix"
+          if ($LASTEXITCODE -ne 0) { throw "failed to commit patched source" }
           git -C mshv-upstream archive --format=zip --output="$PWD/MSHV-DXWeaver-0.4.0-Source.zip" HEAD
-          if ($LASTEXITCODE -ne 0) { throw "failed to create corresponding source archive" }
-          if (-not (Test-Path "MSHV-DXWeaver-0.4.0-Source.zip")) { throw "source archive missing" }
-          Get-Item "MSHV-DXWeaver-0.4.0-Source.zip" | Format-List FullName,Length
+          if ($LASTEXITCODE -ne 0) { throw "source archive failed" }
 
       - name: Create portable Windows archive
         shell: pwsh
         run: |
-          if (Test-Path "MSHV-DXWeaver-0.4.0-Windows.zip") { Remove-Item -Force "MSHV-DXWeaver-0.4.0-Windows.zip" }
           tar.exe -a -c -f "MSHV-DXWeaver-0.4.0-Windows.zip" -C "mshv-package" .
-          if ($LASTEXITCODE -ne 0) { throw "portable ZIP creation failed with $LASTEXITCODE" }
-          if (-not (Test-Path "MSHV-DXWeaver-0.4.0-Windows.zip")) { throw "portable ZIP missing" }
+          if ($LASTEXITCODE -ne 0) { throw "portable ZIP creation failed" }
 
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-          if (-not $iscc) {
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
           }
 
-      - name: Build MSHV-DXWeaver installer
+      - name: Build installer and hashes
         shell: pwsh
         run: |
-          $isccCandidates = @(
-            (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
-            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-            "C:\Program Files\Inno Setup 6\ISCC.exe"
-          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-          if (-not $isccCandidates) { throw "ISCC.exe not found" }
-          $iscc = $isccCandidates[0]
+          $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) {
+            foreach ($p in @("C:\Program Files (x86)\Inno Setup 6\ISCC.exe","C:\Program Files\Inno Setup 6\ISCC.exe")) {
+              if (Test-Path $p) { $iscc = $p; break }
+            }
+          }
+          if (-not $iscc) { throw "ISCC.exe not found" }
           New-Item -ItemType Directory -Force "installer-output-mshv" | Out-Null
           & $iscc "installer/MSHV-DXWeaver.iss"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed with $LASTEXITCODE" }
-          if (-not (Test-Path "installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe")) { throw "MSHV installer was not produced" }
-          Get-Item "installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe" | Format-List FullName,Length
-
-      - name: Create SHA256 manifest
-        shell: pwsh
-        run: |
-          $files = @(
-            "MSHV-DXWeaver-0.4.0-Windows.zip",
-            "MSHV-DXWeaver-0.4.0-Source.zip",
-            "installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe"
-          )
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
+          $setup = "installer-output-mshv/MSHV-DXWeaver-0.4.0-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer missing" }
+          $files = @("MSHV-DXWeaver-0.4.0-Windows.zip","MSHV-DXWeaver-0.4.0-Source.zip",$setup)
           $lines = foreach ($file in $files) {
-            if (-not (Test-Path $file)) { throw "hash input missing: $file" }
             $h = Get-FileHash $file -Algorithm SHA256
-            Write-Host "$file SHA256 $($h.Hash)"
             "$($h.Hash)  $([System.IO.Path]::GetFileName($file))"
           }
           $lines | Set-Content "MSHV-DXWeaver-0.4.0-SHA256.txt" -Encoding ascii
