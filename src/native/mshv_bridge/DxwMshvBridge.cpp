@@ -58,13 +58,16 @@ Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString&
     return c;
 }
 
-std::optional<Candidate> DxwMshvBridge::runnerUp(const QString& excluding) const {
+bool DxwMshvBridge::runnerUp(const QString& excluding, Candidate& result) const {
     std::vector<Candidate> pool;
     pool.reserve(static_cast<std::size_t>(candidates_.size()));
-    for (const auto& c : candidates_) if (QString::fromStdString(c.call) != excluding) pool.push_back(c);
-    auto ranked = scorer_.rank(pool);
-    if (ranked.empty()) return std::nullopt;
-    return ranked.front().candidate;
+    for (const auto& c : candidates_) {
+        if (QString::fromStdString(c.call) != excluding) pool.push_back(c);
+    }
+    const auto ranked = scorer_.rank(pool);
+    if (ranked.empty()) return false;
+    result = ranked.front().candidate;
+    return true;
 }
 
 void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
@@ -112,7 +115,7 @@ void DxwMshvBridge::setArmed(bool armed) {
 void DxwMshvBridge::setStrategy(int strategy) {
     strategy_ = strategy == 0 ? Strategy::Hunt : strategy == 1 ? Strategy::Answer : Strategy::Both;
     if (sm_.armed()) {
-        sm_.disarm("strategy change");
+        processActions(sm_.disarm("strategy change"));
         processActions(sm_.arm(strategy_));
     }
     emitState();
@@ -153,7 +156,10 @@ void DxwMshvBridge::onDecode(QStringList decode) {
     if (!active.isEmpty() && tokens.size() >= 2 && tokens.at(1) == active && tokens.at(0) != myCall_) {
         const QString third = tokens.at(0);
         if (looksLikeCall(third)) {
-            processActions(sm_.onTargetAnswersThirdParty(active.toStdString(), third.toStdString(), runnerUp(active)));
+            Candidate next;
+            const bool hasNext = runnerUp(active, next);
+            processActions(sm_.onTargetAnswersThirdParty(
+                active.toStdString(), third.toStdString(), hasNext ? &next : nullptr));
             return;
         }
     }
