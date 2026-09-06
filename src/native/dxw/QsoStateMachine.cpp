@@ -3,7 +3,8 @@
 
 namespace dxw {
 
-QsoStateMachine::QsoStateMachine(std::string myCall) : myCall_(std::move(myCall)) {}
+QsoStateMachine::QsoStateMachine(std::string myCall, std::string myGrid)
+    : myCall_(std::move(myCall)), myGrid_(std::move(myGrid)) {}
 
 bool QsoStateMachine::allowsHunt() const noexcept {
     return strategy_ == Strategy::Hunt || strategy_ == Strategy::Both;
@@ -25,6 +26,11 @@ void QsoStateMachine::clearTarget() noexcept {
 }
 
 std::vector<Action> QsoStateMachine::arm(Strategy strategy) {
+    if (myCall_.empty()) {
+        armed_ = false;
+        state_ = QsoState::Disarmed;
+        return {{ActionType::Disarm, {}, "cannot arm without station callsign"}};
+    }
     strategy_ = strategy;
     armed_ = true;
     if (state_ == QsoState::Disarmed || state_ == QsoState::Fault) state_ = QsoState::Idle;
@@ -45,9 +51,24 @@ std::vector<Action> QsoStateMachine::disarm(std::string reason) {
 }
 
 std::vector<Action> QsoStateMachine::halt(std::string reason) {
-    auto actions = disarm(reason);
+    const std::string callBefore = activeCall_;
+    std::vector<Action> actions = disarm(reason);
     if (actions.empty() || actions.front().type != ActionType::HaltTx)
-        actions.insert(actions.begin(), {ActionType::HaltTx, activeCall_, reason});
+        actions.insert(actions.begin(), {ActionType::HaltTx, callBefore, reason});
+    return actions;
+}
+
+std::vector<Action> QsoStateMachine::updateStationIdentity(std::string myCall, std::string myGrid) {
+    const bool callChanged = myCall != myCall_;
+    const bool gridChanged = myGrid != myGrid_;
+    if (!callChanged && !gridChanged) return {};
+
+    std::vector<Action> actions;
+    if (callChanged && armed_) {
+        actions = disarm("station callsign changed");
+    }
+    myCall_ = std::move(myCall);
+    myGrid_ = std::move(myGrid);
     return actions;
 }
 
@@ -120,7 +141,7 @@ std::vector<Action> QsoStateMachine::onTargetAnswersThirdParty(
     state_ = QsoState::Idle;
 
     if (nextCandidate != nullptr && allowsHunt()) {
-        auto next = startHunt(*nextCandidate);
+        std::vector<Action> next = startHunt(*nextCandidate);
         actions.insert(actions.end(), next.begin(), next.end());
     }
     return actions;
@@ -145,7 +166,7 @@ std::vector<Action> QsoStateMachine::onTimeout(const Candidate* nextCandidate) {
     clearTarget();
     state_ = QsoState::Idle;
     if (nextCandidate != nullptr && allowsHunt()) {
-        auto next = startHunt(*nextCandidate);
+        std::vector<Action> next = startHunt(*nextCandidate);
         actions.insert(actions.end(), next.begin(), next.end());
     }
     return actions;
