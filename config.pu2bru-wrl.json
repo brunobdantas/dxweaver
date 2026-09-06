@@ -7,6 +7,18 @@
   "gridtracker_forward_enabled": true,
   "gridtracker_forward_host": "127.0.0.1",
   "gridtracker_forward_port": 2238,
+  "relay_enabled": true,
+  "relay_listen_host": "127.0.0.1",
+  "relay_listen_port": 2239,
+  "wrl_forward_host": "127.0.0.1",
+  "wrl_forward_port": 2240,
+  "relay_forward_wsjt": true,
+  "relay_forward_adif": true,
+  "relay_forward_unknown": false,
+  "control_backend": "mshv_native",
+  "native_mshv_required": true,
+  "native_control_resend_sec": 2.0,
+  "allow_unconfirmed_native_control": false,
   "mode": "assist",
   "operating_strategy": "both",
   "selection_delay_sec": 0.45,
@@ -56,13 +68,5 @@
     "unconfirmed_slot": 180,
     "snr": 2.0,
     "low_confidence_penalty": 500
-  },
-  "relay_enabled": true,
-  "relay_listen_host": "127.0.0.1",
-  "relay_listen_port": 2239,
-  "wrl_forward_host": "127.0.0.1",
-  "wrl_forward_port": 2240,
-  "relay_forward_wsjt": true,
-  "relay_forward_adif": true,
-  "relay_forward_unknown": false
+  }
 }
