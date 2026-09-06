@@ -67,10 +67,7 @@ jobs:
         run: |
           $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
           $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
-          $mingw = Get-ChildItem -Path $env:RUNNER_TOOL_CACHE,$env:IQTA_TOOLS -Filter mingw32-make.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $mingw) { $mingw = Get-Command mingw32-make.exe -ErrorAction SilentlyContinue }
-          if (-not $mingw) { throw "mingw32-make.exe not found after Qt tool install" }
-          $mingwPath = if ($mingw.Source) { $mingw.Source } else { $mingw.FullName }
+          $mingwPath = (Get-Command mingw32-make.exe -ErrorAction Stop).Source
           "qmake=$qmake" >> $env:GITHUB_OUTPUT
           "windeployqt=$windeployqt" >> $env:GITHUB_OUTPUT
           "make=$mingwPath" >> $env:GITHUB_OUTPUT
