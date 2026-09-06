@@ -1,5 +1,5 @@
 #define MyAppName "DXWeaver"
-#define MyAppVersion "0.3.2"
+#define MyAppVersion "0.3.3"
 #define MyAppPublisher "DXWeaver Project"
 #define MyAppExeName "DXWeaver.exe"
 
