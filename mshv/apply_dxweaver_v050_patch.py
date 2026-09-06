@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Build-time integration patch for DXWeaver 0.5.0.
+"""Fail-closed build-time integration patch for DXWeaver 0.5.0.
 
-The official MSHV source remains the GPL-3.0 DSP/radio foundation. This patch
-injects DXWeaver's in-process automation core and native safety HUD, removes
-the external UDP control dependency from the automation path, and renames the
-produced application to DXWeaver. It is pinned and fail-closed against one
-audited upstream commit.
+The official MSHV source remains the GPL-3.0 radio/DSP foundation.  DXWeaver's
+C++11-compatible in-process automation and intelligence modules are injected
+without changing the legacy compiler dialect.
 """
 from __future__ import annotations
 
@@ -25,6 +23,13 @@ def replace_once(path: Path, old: str, new: str, label: str) -> None:
         raise RuntimeError(f"{label}: expected exactly one match in {path}, found {count}")
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     print(f"patched {label}: {path}")
+
+
+def require_once(path: Path, text: str, label: str) -> None:
+    count = path.read_text(encoding="utf-8").count(text)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected exactly one match in {path}, found {count}")
+    print(f"verified {label}: {path}")
 
 
 def verify_commit(root: Path) -> None:
@@ -55,21 +60,28 @@ def apply(upstream: Path) -> None:
     tx_h = upstream / "src/HvTxW/hvtxw.h"
     tx_cpp = upstream / "src/HvTxW/hvtxw.cpp"
 
+    # Deliberately keep legacy radio/DSP in its audited dialect.  The dxw:: core
+    # is separately compiled/tested as strict C++11 by CMake and is also valid
+    # under the same gnu++11 qmake build in the unified executable.
+    require_once(pro, "QMAKE_CXXFLAGS += -std=gnu++11 -pedantic-errors\n", "legacy gnu++11 dialect")
+    if "-std=gnu++17" in pro.read_text(encoding="utf-8"):
+        raise RuntimeError("MSHV project unexpectedly requests gnu++17")
+
     replace_once(pro,
-        "QMAKE_CXXFLAGS += -std=gnu++11 -pedantic-errors\n",
-        "QMAKE_CXXFLAGS += -std=gnu++17 -pedantic-errors\n",
-        "C++17 native core")
+        "QT += widgets axcontainer network websockets\n",
+        "QT += widgets axcontainer network websockets sql\n",
+        "QtSql read-only history support")
     replace_once(pro,
         "CONFIG += release warn_on exceptions_off\n",
         "CONFIG += release warn_on exceptions_off\nTARGET = DXWeaver\n",
         "DXWeaver executable target")
     replace_once(pro,
         "HEADERS = src/main_ms.h \\\n",
-        "HEADERS = src/native/dxw/Domain.h \\\n src/native/dxw/CandidateScorer.h \\\n src/native/dxw/QsoStateMachine.h \\\n src/native/dxw/Ft8SlotClock.h \\\n src/native/dxw/HistoryProvider.h \\\n src/native/mshv_bridge/DxwMshvBridge.h \\\n src/native/mshv_bridge/DxwControlPanel.h \\\n src/main_ms.h \\\n",
+        "HEADERS = src/native/dxw/Domain.h \\\n src/native/dxw/CandidateScorer.h \\\n src/native/dxw/CtyResolver.h \\\n src/native/dxw/Ft8SlotClock.h \\\n src/native/dxw/HistoryIndex.h \\\n src/native/dxw/HistoryProvider.h \\\n src/native/dxw/QsoStateMachine.h \\\n src/native/mshv_bridge/DxwHistoryCache.h \\\n src/native/mshv_bridge/DxwMshvBridge.h \\\n src/native/mshv_bridge/DxwControlPanel.h \\\n src/main_ms.h \\\n",
         "native headers")
     replace_once(pro,
         "SOURCES = src/main.cpp \\\n",
-        "SOURCES = src/native/dxw/CandidateScorer.cpp \\\n src/native/dxw/QsoStateMachine.cpp \\\n src/native/dxw/Ft8SlotClock.cpp \\\n src/native/mshv_bridge/DxwMshvBridge.cpp \\\n src/native/mshv_bridge/DxwControlPanel.cpp \\\n src/main.cpp \\\n",
+        "SOURCES = src/native/dxw/CandidateScorer.cpp \\\n src/native/dxw/CtyResolver.cpp \\\n src/native/dxw/Ft8SlotClock.cpp \\\n src/native/dxw/HistoryIndex.cpp \\\n src/native/dxw/QsoStateMachine.cpp \\\n src/native/mshv_bridge/DxwHistoryCache.cpp \\\n src/native/mshv_bridge/DxwMshvBridge.cpp \\\n src/native/mshv_bridge/DxwControlPanel.cpp \\\n src/main.cpp \\\n",
         "native sources")
 
     replace_once(main_h,
@@ -86,8 +98,9 @@ def apply(upstream: Path) -> None:
         "DXWeaver members")
 
     original_autoseq = "    connect(TDecodeList1, SIGNAL(EmitRxTextForAutoSeq(QStringList)), THvTxW, SLOT(SetTextForAutoSeq(QStringList)));\n"
-    native_autoseq = """    // DXWeaver 0.5: decoder -> decision engine -> native AutoSeq, all in-process.
-    dxwBridge = new dxw::DxwMshvBridge("PU2BRU", this);
+    native_autoseq = """    // DXWeaver 0.5: decoder -> intelligence -> native AutoSeq, entirely in-process.
+    dxwBridge = new dxw::DxwMshvBridge(THvTxW->DxwStationCall(), THvTxW->DxwStationGrid(),
+                                       THvTxW->DxwBand(), App_Path, this);
     dxwPanel = new dxw::DxwControlPanel(this);
     dxwPanel->setGeometry(12, 8, 760, 52);
     dxwPanel->raise();
@@ -101,6 +114,8 @@ def apply(upstream: Path) -> None:
     connect(dxwPanel, SIGNAL(haltClicked()), dxwBridge, SLOT(halt()));
     connect(dxwBridge, SIGNAL(stateChanged(QString,QString,int)), dxwPanel, SLOT(setEngineState(QString,QString,int)));
     connect(THvTxW, SIGNAL(EmitDxwLoggedQSO(QStringList)), dxwBridge, SLOT(onQsoLogged(QStringList)));
+    connect(THvTxW, SIGNAL(EmitDxwStationIdentity(QString,QString)), dxwBridge, SLOT(setStationIdentity(QString,QString)));
+    connect(THvTxW, SIGNAL(EmitDxwBand(QString)), dxwBridge, SLOT(setBand(QString)));
 """
     replace_once(main_cpp, original_autoseq, native_autoseq, "in-process decoder automation bridge")
 
@@ -124,14 +139,33 @@ void Main_Ms::StopTxGlobal()
         "    setWindowTitle(\"DXWeaver 0.5.0\");\n",
         "DXWeaver window title")
 
+    # Expose only read-only snapshots of MSHV's authoritative station state.
+    replace_once(tx_h,
+        "public slots:\n",
+        """    QString DxwStationCall() const { return list_macros.value(0); }
+    QString DxwStationGrid() const { return list_macros.value(1); }
+    QString DxwBand() const { return s_band; }
+
+public slots:
+""",
+        "station identity getters")
     replace_once(tx_h,
         "    void EmitUdpConfigure(int);//2.76.7\n",
-        "    void EmitUdpConfigure(int);//2.76.7\n    void EmitDxwLoggedQSO(QStringList);\n",
-        "QSO logged forwarding signal")
+        "    void EmitUdpConfigure(int);//2.76.7\n    void EmitDxwLoggedQSO(QStringList);\n    void EmitDxwStationIdentity(QString,QString);\n    void EmitDxwBand(QString);\n",
+        "DXWeaver native state signals")
+
     replace_once(tx_cpp,
         "    connect(THvLogW, SIGNAL(EmitLoggedQSO(QStringList)), TRadioAndNetW, SLOT(SendLoggedQSO(QStringList)));\n",
         "    connect(THvLogW, SIGNAL(EmitLoggedQSO(QStringList)), TRadioAndNetW, SLOT(SendLoggedQSO(QStringList)));\n    connect(THvLogW, SIGNAL(EmitLoggedQSO(QStringList)), this, SIGNAL(EmitDxwLoggedQSO(QStringList)));\n",
         "QSO logged direct bridge")
+    replace_once(tx_cpp,
+        "    list_macros = list;\n    s_my_base_call = MultiAnswerMod->FindBaseFullCallRemAllSlash(list_macros.at(0));\n",
+        "    list_macros = list;\n    emit EmitDxwStationIdentity(list_macros.value(0), list_macros.value(1));\n    s_my_base_call = MultiAnswerMod->FindBaseFullCallRemAllSlash(list_macros.at(0));\n",
+        "dynamic callsign/grid signal")
+    replace_once(tx_cpp,
+        "    s_band = s;\n    if (s_mode==11 || s_mode==13 || s_mode==18 || allq65) fpsk_restrict = true;",
+        "    s_band = s;\n    emit EmitDxwBand(s_band);\n    if (s_mode==11 || s_mode==13 || s_mode==18 || allq65) fpsk_restrict = true;",
+        "dynamic band signal")
 
     print("DXWeaver 0.5.0 native integration applied successfully")
 
