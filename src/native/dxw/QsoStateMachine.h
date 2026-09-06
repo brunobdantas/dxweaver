@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Domain.h"
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,12 +10,12 @@ class QsoStateMachine final {
 public:
     explicit QsoStateMachine(std::string myCall);
 
-    [[nodiscard]] QsoState state() const noexcept { return state_; }
-    [[nodiscard]] Strategy strategy() const noexcept { return strategy_; }
-    [[nodiscard]] bool armed() const noexcept { return armed_; }
-    [[nodiscard]] bool engaged() const noexcept { return engaged_; }
-    [[nodiscard]] const std::string& activeCall() const noexcept { return activeCall_; }
-    [[nodiscard]] TargetKind activeKind() const noexcept { return activeKind_; }
+    QsoState state() const noexcept { return state_; }
+    Strategy strategy() const noexcept { return strategy_; }
+    bool armed() const noexcept { return armed_; }
+    bool engaged() const noexcept { return engaged_; }
+    const std::string& activeCall() const noexcept { return activeCall_; }
+    TargetKind activeKind() const noexcept { return activeKind_; }
 
     std::vector<Action> arm(Strategy strategy);
     std::vector<Action> disarm(std::string reason = "operator disarm");
@@ -27,9 +26,9 @@ public:
     std::vector<Action> onActiveExchange(const std::string& fromCall, ExchangeStage stage);
     std::vector<Action> onTargetAnswersThirdParty(const std::string& targetCall,
                                                    const std::string& thirdParty,
-                                                   const std::optional<Candidate>& nextCandidate = std::nullopt);
+                                                   const Candidate* nextCandidate = nullptr);
     std::vector<Action> onQsoLogged(const std::string& call);
-    std::vector<Action> onTimeout(const std::optional<Candidate>& nextCandidate = std::nullopt);
+    std::vector<Action> onTimeout(const Candidate* nextCandidate = nullptr);
     std::vector<Action> onCatLost(bool pttWasActive);
 
 private:
