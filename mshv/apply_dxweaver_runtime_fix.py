@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Post-patch hardening for the DXWeaver native MSHV control path.
 
-Applied after apply_dxweaver_patch.py.  It fixes two live integration issues:
-1) AUTO must be applied before AutoSeq / Multi Answer state.
-2) the AutoSeq label's private mode index must be synchronized with HvTxW::s_mode
-   before changing its state.
+Applied after apply_dxweaver_patch.py.
+
+Live-radio findings addressed here:
+1) AutoSeq is per-mode, so its private mode selector must be synchronized with
+   HvTxW::s_mode before changing the flag.
+2) Entering/leaving Multi Answer Standard refreshes MSHV's dependent AUTO /
+   AutoSeq state.  Therefore profile transitions must apply the destructive
+   MA change first and enforce the desired AutoSeq/AUTO state afterwards.
+3) MSHV's native Multi Answer owns sequencing while MA Standard is enabled;
+   normal AutoSeq is deliberately OFF in that profile.
 
 The transformation is asserted and fails closed if the expected patched source
 is not present.
@@ -67,38 +73,45 @@ def apply(root: Path) -> None:
 """,
         """void Main_Ms::SetDxwAutomation(bool auto_enabled,bool auto_seq,bool multi_std)
 {
-    // MSHV AUTO is the master state.  Apply it first because entering/leaving
-    // AUTO may refresh dependent QSO/AutoSeq UI state.
-    if (THvTxW->GetAutoIsOn() != auto_enabled)
-        THvTxW->auto_on();
-
-    // AutoSeq is per-mode in MSHV.  SetDxwAutoSeq synchronizes the internal
-    // label mode with the current HvTxW mode before changing the flag.
-    THvTxW->SetDxwAutoSeq(auto_seq);
-
     // MA Standard is valid only for the modes/activity types where upstream
     // MSHV itself enables it.  Never bypass contest/activity safety rules.
     bool ma_allowed = (s_mode==11 || s_mode==13 || s_mode==18 || allq65) && !g_block_mam;
-    if (!multi_std)
+
+    if (multi_std)
     {
+        // ANSWER profile: ordinary AutoSeq must not compete with Multi Answer.
+        // Set it OFF first, then enter MA Standard.  Enforce AUTO last because
+        // MA mode changes can refresh/reset dependent AUTO state internally.
+        THvTxW->SetDxwAutoSeq(false);
+        if (ma_allowed)
+        {
+            Multi_answer_mod_std->setEnabled(true);
+            if (!Multi_answer_mod_std->isChecked())
+                Multi_answer_mod_std->setChecked(true);
+        }
+        if (THvTxW->GetAutoIsOn() != auto_enabled)
+            THvTxW->auto_on();
+    }
+    else
+    {
+        // HUNT / DISARM profile: leaving MA Standard can reset AUTO/AutoSeq.
+        // Therefore leave MA FIRST, then configure normal AutoSeq and finally
+        // enforce the desired AUTO state.
         if (Multi_answer_mod_std->isChecked())
             Multi_answer_mod_std->setChecked(false);
-    }
-    else if (ma_allowed)
-    {
-        Multi_answer_mod_std->setEnabled(true);
-        if (!Multi_answer_mod_std->isChecked())
-            Multi_answer_mod_std->setChecked(true);
+        THvTxW->SetDxwAutoSeq(auto_seq);
+        if (THvTxW->GetAutoIsOn() != auto_enabled)
+            THvTxW->auto_on();
     }
 
-    // Report what MSHV actually became, not what DXWeaver requested.
+    // Report what MSHV actually became after all synchronous Qt state changes.
     THvTxW->SetDxwActualState(
         THvTxW->GetAutoIsOn(),
         THvTxW->GetDxwAutoSeq(),
         Multi_answer_mod_std->isChecked());
 }
 """,
-        "apply native automation in upstream-safe order",
+        "apply native profile transitions in upstream-safe order",
     )
 
     print("DXWeaver native MSHV runtime hardening applied successfully")
