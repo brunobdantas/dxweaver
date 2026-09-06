@@ -1,0 +1,120 @@
+name: MSHV-DXWeaver Native Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "mshv/**"
+      - ".github/workflows/mshv-native-windows.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mshv-dxweaver-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-native-mshv:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout DXWeaver
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Qt 5.15.2 MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_mingw81"
+          tools: "tools_mingw,8.1.0-1"
+          cache: true
+
+      - name: Clone pinned official MSHV
+        shell: pwsh
+        run: |
+          git clone https://github.com/LZ2HV/MSHV.git mshv-upstream
+          if ($LASTEXITCODE -ne 0) { throw "MSHV clone failed" }
+          git -C mshv-upstream checkout 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
+          if ($LASTEXITCODE -ne 0) { throw "MSHV pinned checkout failed" }
+          $sha = (git -C mshv-upstream rev-parse HEAD).Trim()
+          if ($sha -ne "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf") { throw "unexpected MSHV commit $sha" }
+
+      - name: Apply DXWeaver native patch
+        shell: pwsh
+        run: |
+          python mshv/apply_dxweaver_patch.py mshv-upstream
+          if ($LASTEXITCODE -ne 0) { throw "DXWeaver MSHV patch failed" }
+          git -C mshv-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw "patched MSHV diff check failed" }
+          git -C mshv-upstream diff --stat
+
+      - name: Resolve MinGW tools
+        id: mingw
+        shell: pwsh
+        run: |
+          $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
+          $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          $mingw = Get-ChildItem -Path $env:RUNNER_TOOL_CACHE,$env:IQTA_TOOLS -Filter mingw32-make.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $mingw) { $mingw = Get-Command mingw32-make.exe -ErrorAction SilentlyContinue }
+          if (-not $mingw) { throw "mingw32-make.exe not found after Qt tool install" }
+          $mingwPath = if ($mingw.Source) { $mingw.Source } else { $mingw.FullName }
+          "qmake=$qmake" >> $env:GITHUB_OUTPUT
+          "windeployqt=$windeployqt" >> $env:GITHUB_OUTPUT
+          "make=$mingwPath" >> $env:GITHUB_OUTPUT
+          Write-Host "qmake=$qmake"
+          Write-Host "make=$mingwPath"
+          Write-Host "windeployqt=$windeployqt"
+
+      - name: Build MSHV-DXWeaver x64
+        shell: pwsh
+        working-directory: mshv-upstream
+        run: |
+          & "${{ steps.mingw.outputs.qmake }}" MSHV_WIN64.pro "CONFIG+=release"
+          if ($LASTEXITCODE -ne 0) { throw "qmake failed with $LASTEXITCODE" }
+          & "${{ steps.mingw.outputs.make }}" -j2
+          if ($LASTEXITCODE -ne 0) { throw "MinGW build failed with $LASTEXITCODE" }
+          if (-not (Test-Path "bin/MSHV-DXWeaver.exe")) { throw "MSHV-DXWeaver.exe was not produced" }
+
+      - name: Deploy Qt runtime and package
+        shell: pwsh
+        run: |
+          $pkg = Join-Path $PWD "mshv-package"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item -Path "mshv-upstream/bin/*" -Destination $pkg -Recurse -Force
+          Remove-Item -Recurse -Force "$pkg/log" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$pkg/AllTxtMonthly" -ErrorAction SilentlyContinue
+          & "${{ steps.mingw.outputs.windeployqt }}" --release --compiler-runtime --no-translations "$pkg/MSHV-DXWeaver.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
+          Copy-Item "mshv-upstream/COPYING.txt" "$pkg/COPYING-MSHV-GPL3.txt"
+          Copy-Item "mshv/apply_dxweaver_patch.py" "$pkg/DXWeaver-MSHV-Patch-Source.py"
+          @"
+          MSHV-DXWeaver 0.4.0
+          Official MSHV upstream: https://github.com/LZ2HV/MSHV
+          Upstream commit: 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
+          DXWeaver repository: https://github.com/brunobdantas/dxweaver
+          MSHV derivative: GPL-3.0
+          "@ | Set-Content "$pkg/UPSTREAM-DXWEAVER.txt" -Encoding UTF8
+          Compress-Archive -Path "$pkg/*" -DestinationPath "MSHV-DXWeaver-0.4.0-Windows.zip" -CompressionLevel Optimal
+          $hash = Get-FileHash "MSHV-DXWeaver-0.4.0-Windows.zip" -Algorithm SHA256
+          "$($hash.Hash)  MSHV-DXWeaver-0.4.0-Windows.zip" | Set-Content "MSHV-DXWeaver-0.4.0-SHA256.txt" -Encoding ascii
+          Write-Host "SHA256 $($hash.Hash)"
+
+      - name: Upload native MSHV artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSHV-DXWeaver-0.4.0-Windows
+          path: |
+            MSHV-DXWeaver-0.4.0-Windows.zip
+            MSHV-DXWeaver-0.4.0-SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
