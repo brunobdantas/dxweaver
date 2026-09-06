@@ -27,8 +27,8 @@ class Config:
     callsign: str = "PU2BRU"
     grid: str = ""
 
-    # Primary MSHV/WSJT-X automation listener. Exactly one local application
-    # should listen on this unicast endpoint.
+    # Primary MSHV/WSJT-X listener. Exactly one local application should listen
+    # on this endpoint. MSHV sends its WSJT-X compatible stream to DXWeaver.
     listen_host: str = "127.0.0.1"
     listen_port: int = 2237
     multicast_group: str = ""
@@ -48,19 +48,24 @@ class Config:
     relay_forward_adif: bool = True
     relay_forward_unknown: bool = False
 
+    # Control backend. mshv_native is the v0.4+ architecture: MSHV owns the QSO
+    # state machine/AutoSeq; DXWeaver only requests native modes and chooses an
+    # initial CQ target for HUNT/BOTH. legacy_udp preserves the old behaviour for
+    # diagnostics only.
+    control_backend: str = "mshv_native"  # mshv_native | legacy_udp
+    native_mshv_required: bool = True
+    native_control_resend_sec: float = 2.0
+    allow_unconfirmed_native_control: bool = False
+
     mode: str = "monitor"  # monitor | assist | auto
     operating_strategy: str = "both"  # hunt | answer | both
     selection_delay_sec: float = 0.45
 
-    # QSO state-machine timing. A hunt that has never received a directed
-    # response is abandoned much sooner than a real exchange already underway.
+    # Legacy external-engine timing. Native MSHV mode does not own the live QSO
+    # lifecycle; these remain only for legacy_udp compatibility.
     qso_timeout_sec: int = 150
     hunt_no_response_timeout_sec: int = 45
     preempt_hunt_for_caller: bool = True
-
-    # Directed calls are accepted by default even when they were not preceded
-    # by our own CQ. This is important when another station calls us while a
-    # hunt attempt is still unanswered. Use "after_cq" for stricter behaviour.
     directed_call_policy: str = "always"  # always | after_cq
     failure_cooldown_sec: int = 300
     worked_cooldown_sec: int = 86400
@@ -70,8 +75,7 @@ class Config:
     max_snr: int = 20
     cq_only: bool = True
 
-    # Deprecated compatibility option from <= 0.3.2. Kept so existing config
-    # files continue to load; directed_call_policy now controls this behaviour.
+    # Deprecated compatibility option from <= 0.3.2.
     answer_directed_after_cq_only: bool = True
     cq_response_window_sec: int = 45
 
@@ -88,7 +92,7 @@ class Config:
     auto_discover_hrd: bool = True
     history_refresh_sec: int = 30
 
-    # DXCC/entity resolver. The cache can be updated from the official CTY.DAT URL.
+    # DXCC/entity resolver
     cty_file: str = "cty.dat"
     cty_auto_update: bool = True
     cty_update_max_age_days: int = 14
@@ -107,17 +111,9 @@ class Config:
             return cls()
         raw = json.loads(p.read_text(encoding="utf-8"))
 
-        # v0.3.0 used 2238 as the GridTracker->DXWeaver relay input and 2239
-        # as the WRL target, while it had no DXWeaver->GridTracker fanout.
-        # Migrate only the exact legacy default topology, preserving custom
-        # operator port choices.
         legacy_030 = "gridtracker_forward_enabled" not in raw
-
-        # v0.3.3 replaces the old CQ-window boolean with an explicit directed
-        # call policy. Existing installs receive the safer operator-friendly
-        # default: answer explicit calls to us even if they arrive during an
-        # unanswered hunt attempt.
         legacy_directed_policy = "directed_call_policy" not in raw
+        legacy_control_backend = "control_backend" not in raw
 
         weights = ScoreWeights(**raw.pop("weights", {}))
         cfg = cls(**raw)
@@ -136,6 +132,13 @@ class Config:
             cfg.directed_call_policy = "always"
             changed = True
 
+        # Upgrade existing installs to the architecture that delegates live QSO
+        # sequencing to MSHV. The operator can explicitly select legacy_udp if
+        # they need the previous implementation for comparison/diagnostics.
+        if legacy_control_backend:
+            cfg.control_backend = "mshv_native"
+            changed = True
+
         cfg.normalize()
         if changed:
             try:
@@ -147,6 +150,7 @@ class Config:
     def normalize(self) -> None:
         self.callsign = self.callsign.upper().strip()
         self.grid = self.grid.upper().strip()
+        self.control_backend = self.control_backend.lower().strip()
         self.mode = self.mode.lower().strip()
         self.operating_strategy = self.operating_strategy.lower().strip()
         self.directed_call_policy = self.directed_call_policy.lower().strip()
@@ -156,6 +160,8 @@ class Config:
         self.excluded_calls = [x.upper().strip() for x in self.excluded_calls]
         self.excluded_prefixes = [x.upper().strip() for x in self.excluded_prefixes]
         self.watchlist = [x.upper().strip() for x in self.watchlist]
+        if self.control_backend not in {"mshv_native", "legacy_udp"}:
+            self.control_backend = "mshv_native"
         if self.mode not in {"monitor", "assist", "auto"}:
             self.mode = "monitor"
         if self.operating_strategy not in {"hunt", "answer", "both"}:
@@ -163,6 +169,7 @@ class Config:
         if self.directed_call_policy not in {"always", "after_cq"}:
             self.directed_call_policy = "always"
         self.hunt_no_response_timeout_sec = max(15, int(self.hunt_no_response_timeout_sec))
+        self.native_control_resend_sec = max(0.5, float(self.native_control_resend_sec))
 
     def save(self, path: str | Path) -> None:
         self.normalize()
