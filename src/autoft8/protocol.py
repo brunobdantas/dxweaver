@@ -1,4 +1,10 @@
-"""WSJT-X/MSHV UDP protocol catalog (schema 3 subset needed by Auto FT8)."""
+"""WSJT-X/MSHV UDP protocol catalog used by DXWeaver.
+
+DXWeaver keeps the standard WSJT-X schema-3 wire format.  For the companion
+MSHV-DXWeaver build we append three booleans to Configure and Status.  The
+protocol explicitly permits trailing fields, so ordinary WSJT-X/MSHV peers
+silently ignore the extension.
+"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from .qdatastream import Reader, Writer, DecodeError, QUINT32_MAX, qtime_text
@@ -41,6 +47,13 @@ def parse(data: bytes) -> Message:
             ftol = r.u32(); trp = r.u32(); d["frequency_tolerance"] = None if ftol == QUINT32_MAX else ftol
             d["tr_period"] = None if trp == QUINT32_MAX else trp
             d["configuration_name"] = r.utf8(); d["tx_message"] = r.utf8()
+            # MSHV-DXWeaver extension.  These fields are appended, never inserted.
+            if not r.at_end():
+                d["dxw_native_capable"] = r.boolean()
+            if not r.at_end():
+                d["dxw_auto_seq"] = r.boolean()
+            if not r.at_end():
+                d["dxw_multi_answer_std"] = r.boolean()
         elif mtype == DECODE:
             d["new"] = r.boolean(); d["time_ms"] = r.qtime(); d["time"] = qtime_text(d["time_ms"])
             d["snr"] = r.i32(); d["delta_time"] = r.double(); d["delta_frequency"] = r.u32()
@@ -75,5 +88,44 @@ def build_halt_tx(instance_id: str, auto_only: bool = True, schema: int = SCHEMA
     return _begin(HALT_TX, instance_id, schema).boolean(auto_only).value()
 
 
-def build_heartbeat(instance_id: str, version: str = "AutoFT8", schema: int = SCHEMA) -> bytes:
+def build_heartbeat(instance_id: str, version: str = "DXWeaver", schema: int = SCHEMA) -> bytes:
     return _begin(HEARTBEAT, instance_id, schema).u32(SCHEMA).utf8(version).utf8("").value()
+
+
+def build_configure(
+    instance_id: str,
+    *,
+    mode: str = "",
+    frequency_tolerance: int = QUINT32_MAX,
+    submode: str = "",
+    fast_mode: bool = False,
+    tr_period: int = QUINT32_MAX,
+    rx_df: int = QUINT32_MAX,
+    dx_call: str = "",
+    dx_grid: str = "",
+    generate_messages: bool = False,
+    dxw_auto_enabled: bool = False,
+    dxw_auto_seq: bool = False,
+    dxw_multi_answer_std: bool = False,
+    schema: int = SCHEMA,
+) -> bytes:
+    """Build Configure plus the optional MSHV-DXWeaver automation tail.
+
+    The first nine fields are the standard WSJT-X Configure payload.  The final
+    three booleans are understood only by the companion MSHV-DXWeaver build.
+    They are intentionally trailing fields for backwards compatibility.
+    """
+    w = _begin(CONFIGURE, instance_id, schema)
+    w.utf8(mode)
+    w.u32(int(frequency_tolerance))
+    w.utf8(submode)
+    w.boolean(bool(fast_mode))
+    w.u32(int(tr_period))
+    w.u32(int(rx_df))
+    w.utf8(dx_call)
+    w.utf8(dx_grid)
+    w.boolean(bool(generate_messages))
+    w.boolean(bool(dxw_auto_enabled))
+    w.boolean(bool(dxw_auto_seq))
+    w.boolean(bool(dxw_multi_answer_std))
+    return w.value()
