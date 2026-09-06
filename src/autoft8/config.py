@@ -26,19 +26,28 @@ class ScoreWeights:
 class Config:
     callsign: str = "PU2BRU"
     grid: str = ""
+
+    # Primary MSHV/WSJT-X automation listener. Exactly one local application
+    # should listen on this unicast endpoint.
     listen_host: str = "127.0.0.1"
     listen_port: int = 2237
     multicast_group: str = ""
 
+    # Transparent one-way copy of the primary MSHV stream to GridTracker.
+    gridtracker_forward_enabled: bool = True
+    gridtracker_forward_host: str = "127.0.0.1"
+    gridtracker_forward_port: int = 2238
+
     # UDP relay: GridTracker -> DXWeaver -> WRL Desktop/Integrations App.
     relay_enabled: bool = True
     relay_listen_host: str = "127.0.0.1"
-    relay_listen_port: int = 2238
+    relay_listen_port: int = 2239
     wrl_forward_host: str = "127.0.0.1"
-    wrl_forward_port: int = 2239
+    wrl_forward_port: int = 2240
     relay_forward_wsjt: bool = True
     relay_forward_adif: bool = True
     relay_forward_unknown: bool = False
+
     mode: str = "monitor"  # monitor | assist | auto
     operating_strategy: str = "both"  # hunt | answer | both
     selection_delay_sec: float = 0.45
@@ -83,9 +92,25 @@ class Config:
         if not p.exists():
             return cls()
         raw = json.loads(p.read_text(encoding="utf-8"))
+
+        # v0.3.0 used 2238 as the GridTracker->DXWeaver relay input and 2239
+        # as the WRL target, while it had no DXWeaver->GridTracker fanout.
+        # Migrate only the exact legacy default topology, preserving custom
+        # operator port choices.
+        legacy_030 = "gridtracker_forward_enabled" not in raw
         weights = ScoreWeights(**raw.pop("weights", {}))
         cfg = cls(**raw)
         cfg.weights = weights
+        if legacy_030 and cfg.listen_port == 2237 and cfg.relay_listen_port == 2238 and cfg.wrl_forward_port == 2239:
+            cfg.gridtracker_forward_enabled = True
+            cfg.gridtracker_forward_host = "127.0.0.1"
+            cfg.gridtracker_forward_port = 2238
+            cfg.relay_listen_port = 2239
+            cfg.wrl_forward_port = 2240
+            try:
+                cfg.save(p)
+            except OSError:
+                pass
         cfg.normalize()
         return cfg
 
