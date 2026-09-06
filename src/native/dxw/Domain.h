@@ -27,9 +27,13 @@ enum class ActionType {
 };
 
 struct Action {
-    ActionType type{};
+    ActionType type;
     std::string call;
     std::string reason;
+
+    Action() : type(ActionType::HaltTx) {}
+    Action(ActionType actionType, std::string actionCall, std::string actionReason)
+        : type(actionType), call(actionCall), reason(actionReason) {}
 };
 
 struct Candidate {
