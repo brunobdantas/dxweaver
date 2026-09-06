@@ -1,9 +1,12 @@
 {
   "callsign": "PU2BRU",
   "grid": "",
-  "listen_host": "0.0.0.0",
+  "listen_host": "127.0.0.1",
   "listen_port": 2237,
-  "multicast_group": "239.255.0.1",
+  "multicast_group": "",
+  "gridtracker_forward_enabled": true,
+  "gridtracker_forward_host": "127.0.0.1",
+  "gridtracker_forward_port": 2238,
   "mode": "assist",
   "operating_strategy": "both",
   "selection_delay_sec": 0.45,
@@ -17,13 +20,9 @@
   "cq_only": true,
   "answer_directed_after_cq_only": true,
   "cq_response_window_sec": 45,
-  "allowed_modes": [
-    "FT8"
-  ],
+  "allowed_modes": ["FT8"],
   "allowed_bands": [],
-  "allowed_special_operations": [
-    "NONE"
-  ],
+  "allowed_special_operations": ["NONE"],
   "excluded_calls": [],
   "excluded_prefixes": [],
   "watchlist": [],
@@ -57,9 +56,9 @@
   },
   "relay_enabled": true,
   "relay_listen_host": "127.0.0.1",
-  "relay_listen_port": 2238,
+  "relay_listen_port": 2239,
   "wrl_forward_host": "127.0.0.1",
-  "wrl_forward_port": 2239,
+  "wrl_forward_port": 2240,
   "relay_forward_wsjt": true,
   "relay_forward_adif": true,
   "relay_forward_unknown": false
