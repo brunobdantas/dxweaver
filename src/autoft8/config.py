@@ -51,7 +51,17 @@ class Config:
     mode: str = "monitor"  # monitor | assist | auto
     operating_strategy: str = "both"  # hunt | answer | both
     selection_delay_sec: float = 0.45
+
+    # QSO state-machine timing. A hunt that has never received a directed
+    # response is abandoned much sooner than a real exchange already underway.
     qso_timeout_sec: int = 150
+    hunt_no_response_timeout_sec: int = 45
+    preempt_hunt_for_caller: bool = True
+
+    # Directed calls are accepted by default even when they were not preceded
+    # by our own CQ. This is important when another station calls us while a
+    # hunt attempt is still unanswered. Use "after_cq" for stricter behaviour.
+    directed_call_policy: str = "always"  # always | after_cq
     failure_cooldown_sec: int = 300
     worked_cooldown_sec: int = 86400
     max_qsos_per_hour: int = 20
@@ -59,8 +69,12 @@ class Config:
     min_snr: int = -24
     max_snr: int = 20
     cq_only: bool = True
+
+    # Deprecated compatibility option from <= 0.3.2. Kept so existing config
+    # files continue to load; directed_call_policy now controls this behaviour.
     answer_directed_after_cq_only: bool = True
     cq_response_window_sec: int = 45
+
     allowed_modes: list[str] = field(default_factory=lambda: ["FT8"])
     allowed_bands: list[str] = field(default_factory=list)
     allowed_special_operations: list[str] = field(default_factory=lambda: ["NONE"])
@@ -98,20 +112,36 @@ class Config:
         # Migrate only the exact legacy default topology, preserving custom
         # operator port choices.
         legacy_030 = "gridtracker_forward_enabled" not in raw
+
+        # v0.3.3 replaces the old CQ-window boolean with an explicit directed
+        # call policy. Existing installs receive the safer operator-friendly
+        # default: answer explicit calls to us even if they arrive during an
+        # unanswered hunt attempt.
+        legacy_directed_policy = "directed_call_policy" not in raw
+
         weights = ScoreWeights(**raw.pop("weights", {}))
         cfg = cls(**raw)
         cfg.weights = weights
+        changed = False
+
         if legacy_030 and cfg.listen_port == 2237 and cfg.relay_listen_port == 2238 and cfg.wrl_forward_port == 2239:
             cfg.gridtracker_forward_enabled = True
             cfg.gridtracker_forward_host = "127.0.0.1"
             cfg.gridtracker_forward_port = 2238
             cfg.relay_listen_port = 2239
             cfg.wrl_forward_port = 2240
+            changed = True
+
+        if legacy_directed_policy:
+            cfg.directed_call_policy = "always"
+            changed = True
+
+        cfg.normalize()
+        if changed:
             try:
                 cfg.save(p)
             except OSError:
                 pass
-        cfg.normalize()
         return cfg
 
     def normalize(self) -> None:
@@ -119,6 +149,7 @@ class Config:
         self.grid = self.grid.upper().strip()
         self.mode = self.mode.lower().strip()
         self.operating_strategy = self.operating_strategy.lower().strip()
+        self.directed_call_policy = self.directed_call_policy.lower().strip()
         self.allowed_modes = [x.upper().strip() for x in self.allowed_modes]
         self.allowed_bands = [x.lower().strip() for x in self.allowed_bands]
         self.allowed_special_operations = [x.upper().strip() for x in self.allowed_special_operations]
@@ -129,6 +160,9 @@ class Config:
             self.mode = "monitor"
         if self.operating_strategy not in {"hunt", "answer", "both"}:
             self.operating_strategy = "both"
+        if self.directed_call_policy not in {"always", "after_cq"}:
+            self.directed_call_policy = "always"
+        self.hunt_no_response_timeout_sec = max(15, int(self.hunt_no_response_timeout_sec))
 
     def save(self, path: str | Path) -> None:
         self.normalize()
