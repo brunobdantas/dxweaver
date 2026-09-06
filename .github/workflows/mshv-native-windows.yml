@@ -84,37 +84,92 @@ jobs:
           & "${{ steps.mingw.outputs.make }}" -j2
           if ($LASTEXITCODE -ne 0) { throw "MinGW build failed with $LASTEXITCODE" }
           if (-not (Test-Path "bin/MSHV-DXWeaver.exe")) { throw "MSHV-DXWeaver.exe was not produced" }
+          $exe = Get-Item "bin/MSHV-DXWeaver.exe"
+          Write-Host "Built $($exe.FullName) ($($exe.Length) bytes)"
 
-      - name: Deploy Qt runtime and package
+      - name: Stage compiled MSHV tree
         shell: pwsh
         run: |
           $pkg = Join-Path $PWD "mshv-package"
+          if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
           New-Item -ItemType Directory -Force $pkg | Out-Null
           Copy-Item -Path "mshv-upstream/bin/*" -Destination $pkg -Recurse -Force
           Remove-Item -Recurse -Force "$pkg/log" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "$pkg/AllTxtMonthly" -ErrorAction SilentlyContinue
-          & "${{ steps.mingw.outputs.windeployqt }}" --release --compiler-runtime --no-translations "$pkg/MSHV-DXWeaver.exe"
+          if (-not (Test-Path "$pkg/MSHV-DXWeaver.exe")) { throw "staged MSHV-DXWeaver.exe is missing" }
+          Get-Item "$pkg/MSHV-DXWeaver.exe" | Format-List FullName,Length,LastWriteTime
+
+      - name: Upload raw compiled EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSHV-DXWeaver-0.4.0-Raw-EXE
+          path: mshv-package/MSHV-DXWeaver.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy Qt runtime
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "mshv-package/MSHV-DXWeaver.exe"
+          & "${{ steps.mingw.outputs.windeployqt }}" --release --compiler-runtime --no-translations $exe
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
-          Copy-Item "mshv-upstream/COPYING.txt" "$pkg/COPYING-MSHV-GPL3.txt"
-          Copy-Item "mshv/apply_dxweaver_patch.py" "$pkg/DXWeaver-MSHV-Patch-Source.py"
+          if (-not (Test-Path "mshv-package/Qt5Core.dll")) { throw "Qt5Core.dll missing after windeployqt" }
+          Get-ChildItem "mshv-package" -File | Sort-Object Name | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Add GPL notices and patch source
+        shell: pwsh
+        run: |
+          Copy-Item "mshv-upstream/COPYING.txt" "mshv-package/COPYING-MSHV-GPL3.txt" -Force
+          Copy-Item "mshv/apply_dxweaver_patch.py" "mshv-package/DXWeaver-MSHV-Patch-Source.py" -Force
+          cmd /c "git -C mshv-upstream diff --binary > mshv-package\DXWeaver-MSHV-0.4.0.patch"
+          if ($LASTEXITCODE -ne 0) { throw "failed to export MSHV source patch" }
           @"
           MSHV-DXWeaver 0.4.0
           Official MSHV upstream: https://github.com/LZ2HV/MSHV
           Upstream commit: 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
           DXWeaver repository: https://github.com/brunobdantas/dxweaver
-          MSHV derivative: GPL-3.0
-          "@ | Set-Content "$pkg/UPSTREAM-DXWEAVER.txt" -Encoding UTF8
-          Compress-Archive -Path "$pkg/*" -DestinationPath "MSHV-DXWeaver-0.4.0-Windows.zip" -CompressionLevel Optimal
-          $hash = Get-FileHash "MSHV-DXWeaver-0.4.0-Windows.zip" -Algorithm SHA256
-          "$($hash.Hash)  MSHV-DXWeaver-0.4.0-Windows.zip" | Set-Content "MSHV-DXWeaver-0.4.0-SHA256.txt" -Encoding ascii
-          Write-Host "SHA256 $($hash.Hash)"
+          MSHV derivative license: GPL-3.0
 
-      - name: Upload native MSHV artifact
+          This package contains the patch source and GPL notice. A complete
+          corresponding patched source archive is published beside the Windows
+          runtime archive by the same GitHub Actions run.
+          "@ | Set-Content "mshv-package/UPSTREAM-DXWEAVER.txt" -Encoding UTF8
+          if (-not (Test-Path "mshv-package/DXWeaver-MSHV-0.4.0.patch")) { throw "patch source missing" }
+
+      - name: Create corresponding source archive
+        shell: pwsh
+        run: |
+          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" add -u
+          git -C mshv-upstream -c user.name="DXWeaver CI" -c user.email="ci@dxweaver.invalid" commit -m "DXWeaver 0.4.0 native control patch"
+          if ($LASTEXITCODE -ne 0) { throw "failed to commit patched source for archive" }
+          git -C mshv-upstream archive --format=zip --output="$PWD/MSHV-DXWeaver-0.4.0-Source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw "failed to create corresponding source archive" }
+          if (-not (Test-Path "MSHV-DXWeaver-0.4.0-Source.zip")) { throw "source archive missing" }
+          Get-Item "MSHV-DXWeaver-0.4.0-Source.zip" | Format-List FullName,Length
+
+      - name: Create portable Windows archive and hashes
+        shell: pwsh
+        run: |
+          if (Test-Path "MSHV-DXWeaver-0.4.0-Windows.zip") { Remove-Item -Force "MSHV-DXWeaver-0.4.0-Windows.zip" }
+          tar.exe -a -c -f "MSHV-DXWeaver-0.4.0-Windows.zip" -C "mshv-package" .
+          if ($LASTEXITCODE -ne 0) { throw "portable ZIP creation failed with $LASTEXITCODE" }
+          if (-not (Test-Path "MSHV-DXWeaver-0.4.0-Windows.zip")) { throw "portable ZIP missing" }
+          $runtimeHash = Get-FileHash "MSHV-DXWeaver-0.4.0-Windows.zip" -Algorithm SHA256
+          $sourceHash = Get-FileHash "MSHV-DXWeaver-0.4.0-Source.zip" -Algorithm SHA256
+          @(
+            "$($runtimeHash.Hash)  MSHV-DXWeaver-0.4.0-Windows.zip",
+            "$($sourceHash.Hash)  MSHV-DXWeaver-0.4.0-Source.zip"
+          ) | Set-Content "MSHV-DXWeaver-0.4.0-SHA256.txt" -Encoding ascii
+          Write-Host "Runtime SHA256 $($runtimeHash.Hash)"
+          Write-Host "Source  SHA256 $($sourceHash.Hash)"
+
+      - name: Upload native MSHV package
         uses: actions/upload-artifact@v4
         with:
           name: MSHV-DXWeaver-0.4.0-Windows
           path: |
             MSHV-DXWeaver-0.4.0-Windows.zip
+            MSHV-DXWeaver-0.4.0-Source.zip
             MSHV-DXWeaver-0.4.0-SHA256.txt
           if-no-files-found: error
           retention-days: 30
