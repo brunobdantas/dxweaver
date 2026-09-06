@@ -57,8 +57,8 @@ std::vector<Action> QsoStateMachine::startHunt(const Candidate& candidate) {
     engaged_ = false;
     state_ = QsoState::HuntCalling;
     return {
-        {ActionType::SelectTarget, candidate.call, "highest ranked HUNT candidate"},
         {ActionType::EnsureAuto, candidate.call, "native AutoSeq must own exchange"},
+        {ActionType::SelectTarget, candidate.call, "highest ranked HUNT candidate"},
         {ActionType::StartHunt, candidate.call, "start native HUNT"}
     };
 }
@@ -84,8 +84,8 @@ std::vector<Action> QsoStateMachine::onDirectedCaller(const Candidate& caller) {
     setTarget(caller, TargetKind::DirectedCaller);
     engaged_ = true;
     state_ = QsoState::Locked;
-    actions.push_back({ActionType::SelectTarget, caller.call, "directed caller has absolute priority"});
     actions.push_back({ActionType::EnsureAuto, caller.call, "native AutoSeq/MultiAnswer"});
+    actions.push_back({ActionType::SelectTarget, caller.call, "directed caller has absolute priority"});
     actions.push_back({ActionType::StartAnswer, caller.call, "answer directed caller"});
     actions.push_back({ActionType::LockTarget, caller.call, "directed caller locked"});
     return actions;
@@ -107,7 +107,7 @@ std::vector<Action> QsoStateMachine::onActiveExchange(const std::string& fromCal
 std::vector<Action> QsoStateMachine::onTargetAnswersThirdParty(
     const std::string& targetCall,
     const std::string& thirdParty,
-    const std::optional<Candidate>& nextCandidate) {
+    const Candidate* nextCandidate) {
     if (!armed_ || targetCall.empty() || targetCall != activeCall_) return {};
     if (activeKind_ != TargetKind::Hunt) return {};
 
@@ -119,7 +119,7 @@ std::vector<Action> QsoStateMachine::onTargetAnswersThirdParty(
     clearTarget();
     state_ = QsoState::Idle;
 
-    if (nextCandidate && allowsHunt()) {
+    if (nextCandidate != nullptr && allowsHunt()) {
         auto next = startHunt(*nextCandidate);
         actions.insert(actions.end(), next.begin(), next.end());
     }
@@ -134,7 +134,7 @@ std::vector<Action> QsoStateMachine::onQsoLogged(const std::string& call) {
     return {{ActionType::ClearTarget, old, "QSO logged"}};
 }
 
-std::vector<Action> QsoStateMachine::onTimeout(const std::optional<Candidate>& nextCandidate) {
+std::vector<Action> QsoStateMachine::onTimeout(const Candidate* nextCandidate) {
     if (!armed_ || activeCall_.empty()) return {};
     const std::string old = activeCall_;
     std::vector<Action> actions{
@@ -144,7 +144,7 @@ std::vector<Action> QsoStateMachine::onTimeout(const std::optional<Candidate>& n
     };
     clearTarget();
     state_ = QsoState::Idle;
-    if (nextCandidate && allowsHunt()) {
+    if (nextCandidate != nullptr && allowsHunt()) {
         auto next = startHunt(*nextCandidate);
         actions.insert(actions.end(), next.begin(), next.end());
     }
