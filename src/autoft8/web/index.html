@@ -13,12 +13,13 @@
     <div class="brand-block">
       <div class="brand-mark">DX</div>
       <div>
-        <div class="eyebrow">FT8 AUTOMATION / UDP TELEMETRY</div>
-        <div class="brand">DXWeaver <span id="version">v0.3.0</span></div>
+        <div class="eyebrow">FT8 INTELLIGENCE / NATIVE MSHV CONTROL / UDP TELEMETRY</div>
+        <div class="brand">DXWeaver <span id="version">v0.4.0</span></div>
       </div>
     </div>
     <div class="top-status">
       <div class="pill neutral" id="radio-link"><span class="dot"></span> MSHV WAITING</div>
+      <div class="pill neutral" id="native-link"><span class="dot"></span> NATIVE UNKNOWN</div>
       <div class="pill neutral" id="wrl-link"><span class="dot"></span> WRL ROUTER</div>
       <div class="utc" id="utc-clock">--:--:-- UTC</div>
     </div>
@@ -51,9 +52,9 @@
       </div>
 
       <div class="active-target">
-        <span class="control-label">ACTIVE TARGET</span>
-        <strong id="active-call">—</strong>
-        <small id="active-time">IDLE</small>
+        <span class="control-label">CONTROL OWNER</span>
+        <strong id="active-call">MSHV</strong>
+        <small id="active-time">NATIVE STATE WAITING</small>
       </div>
     </section>
 
@@ -61,7 +62,7 @@
       <article class="metric panel"><span>SESSION QSO</span><strong id="m-session">0</strong><small id="m-hour">0 this hour</small></article>
       <article class="metric panel"><span>HISTORY</span><strong id="m-history">0</strong><small id="m-entities">0 entities</small></article>
       <article class="metric panel"><span>DXCC DATA</span><strong id="m-cty">0</strong><small id="m-cty-path">CTY.DAT</small></article>
-      <article class="metric panel"><span>LAST ACTION</span><strong class="metric-text" id="m-action">BOOT</strong><small id="m-cq">CQ window —</small></article>
+      <article class="metric panel"><span>LAST ACTION</span><strong class="metric-text" id="m-action">BOOT</strong><small id="m-cq">Native backend</small></article>
     </section>
 
     <section class="main-grid">
@@ -83,15 +84,15 @@
         <article class="panel flow-panel">
           <div class="panel-head">
             <div><div class="eyebrow">DATAGRAM TELEMETRY</div><h2>UDP / WRL Router</h2></div>
-            <div class="route-address" id="route-address">127.0.0.1:2238 → 127.0.0.1:2239</div>
+            <div class="route-address" id="route-address">127.0.0.1:2239 → 127.0.0.1:2240</div>
           </div>
           <div class="flow-map">
-            <div class="node"><span class="node-icon">TX</span><strong>MSHV</strong><small id="mshv-packets">0 packets</small></div>
-            <div class="link"><i></i><span>multicast</span></div>
-            <div class="node"><span class="node-icon">GT</span><strong>GridTracker</strong><small>UDP forward</small></div>
+            <div class="node"><span class="node-icon">TX</span><strong>MSHV-DXWeaver</strong><small id="mshv-packets">0 packets</small></div>
+            <div class="link live"><i></i><span>2237 → 2238</span></div>
+            <div class="node"><span class="node-icon">GT</span><strong>GridTracker</strong><small>UDP forward :2239</small></div>
             <div class="link live"><i></i><span id="relay-rate">0 pkt</span></div>
-            <div class="node focus"><span class="node-icon">DX</span><strong>DXWeaver</strong><small>transparent relay</small></div>
-            <div class="link live"><i></i><span>ADIF + WSJT-X</span></div>
+            <div class="node focus"><span class="node-icon">DX</span><strong>DXWeaver</strong><small>WRL router</small></div>
+            <div class="link live"><i></i><span>→ :2240</span></div>
             <div class="node"><span class="node-icon">WRL</span><strong>World Radio League</strong><small id="forwarded-label">0 forwarded</small></div>
           </div>
           <div class="router-metrics">
@@ -108,8 +109,19 @@
 
       <aside class="right-column">
         <article class="panel radio-panel">
-          <div class="panel-head"><div><div class="eyebrow">RADIO STATE</div><h2>MSHV / WSJT-X</h2></div><div class="signal-bars"><i></i><i></i><i></i><i></i></div></div>
-          <dl class="kv"><div><dt>INSTANCE</dt><dd id="s-instance">—</dd></div><div><dt>MODE</dt><dd id="s-mode">—</dd></div><div><dt>DIAL</dt><dd id="s-dial">—</dd></div><div><dt>DX CALL</dt><dd id="s-dx">—</dd></div><div><dt>TX STATE</dt><dd id="s-tx">RX</dd></div><div><dt>RX/TX DF</dt><dd id="s-df">—</dd></div></dl>
+          <div class="panel-head"><div><div class="eyebrow">RADIO STATE / ACKNOWLEDGEMENT</div><h2>MSHV Native Control</h2></div><div class="signal-bars"><i></i><i></i><i></i><i></i></div></div>
+          <dl class="kv">
+            <div><dt>INSTANCE</dt><dd id="s-instance">—</dd></div>
+            <div><dt>MODE</dt><dd id="s-mode">—</dd></div>
+            <div><dt>DIAL</dt><dd id="s-dial">—</dd></div>
+            <div><dt>DX CALL</dt><dd id="s-dx">—</dd></div>
+            <div><dt>TX STATE</dt><dd id="s-tx">RX</dd></div>
+            <div><dt>RX/TX DF</dt><dd id="s-df">—</dd></div>
+            <div><dt>NATIVE EXTENSION</dt><dd id="n-capable">NOT DETECTED</dd></div>
+            <div><dt>MASTER AUTO</dt><dd id="n-auto">REQ — / ACK —</dd></div>
+            <div><dt>AUTOSEQ</dt><dd id="n-aseq">REQ — / ACK —</dd></div>
+            <div><dt>MULTI ANSWER STD</dt><dd id="n-mastd">REQ — / ACK —</dd></div>
+          </dl>
         </article>
 
         <article class="panel sources-panel">
