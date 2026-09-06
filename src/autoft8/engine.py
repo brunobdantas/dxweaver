@@ -19,6 +19,7 @@ class Engine:
         self.history = history
         self.resolver = resolver
         self.transport = None
+        self.fanout = None
         self.lock = threading.RLock()
         self.status: dict = {}
         self.instance = ""
@@ -45,6 +46,15 @@ class Engine:
 
     def attach_transport(self, t):
         self.transport = t
+
+    def attach_fanout(self, fanout):
+        """Attach optional GridTracker fanout telemetry.
+
+        Forwarding itself is performed directly by UdpTransport.raw_callback so
+        it remains byte-transparent and independent of FT8 parsing. Keeping the
+        reference here is only for diagnostics/dashboard compatibility.
+        """
+        self.fanout = fanout
 
     def attach_relay(self, relay):
         self.relay = relay
@@ -256,7 +266,7 @@ class Engine:
             cs = sorted(self.candidates.values(), key=lambda c: c.score, reverse=True)[:30]
             now = time.time()
             return {
-                "version": "0.3.0",
+                "version": "0.3.2",
                 "armed": self.armed,
                 "mode": self.cfg.mode,
                 "operating_strategy": self.cfg.operating_strategy,
@@ -281,6 +291,7 @@ class Engine:
                 "last_error": self.last_error,
                 "qso_log": list(self.qso_log)[-20:],
                 "transport": self.transport.snapshot() if self.transport and hasattr(self.transport, "snapshot") else {},
+                "fanout": self.fanout.snapshot() if self.fanout and hasattr(self.fanout, "snapshot") else {"enabled": False},
                 "relay": self.relay.snapshot() if self.relay else {"enabled": False},
                 "limits": {
                     "per_hour": self.cfg.max_qsos_per_hour,
