@@ -31,11 +31,12 @@ Assert-LastExit "CTest native QA"
 $Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp",$Patcher -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
 if ($Hardcoded) { throw "Hardcoded station identity detected in product integration" }
 
-# UI source gate: the cockpit itself may not use absolute panel geometry/z-order.
+# UI source gate: production widgets themselves may not use absolute panel
+# geometry/z-order. The patcher intentionally contains those token strings in
+# its own fail-closed verifier, so it is validated after application below.
 $UiSources = @(
     "src\native\mshv_bridge\DxwControlPanel.cpp",
-    "src\native\mshv_bridge\DxwCandidateMatrix.cpp",
-    $Patcher
+    "src\native\mshv_bridge\DxwCandidateMatrix.cpp"
 )
 $AbsolutePanelLayout = Select-String -Path $UiSources -Pattern "dxwPanel->setGeometry|dxwPanel->move\(|dxwPanel->raise\(" -ErrorAction SilentlyContinue
 if ($AbsolutePanelLayout) { throw "Absolute DXWeaver panel geometry/z-order detected" }
