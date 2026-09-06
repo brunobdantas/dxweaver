@@ -26,6 +26,10 @@ Assert-LastExit "CMake native core build"
 ctest --test-dir build-native -C Release --output-on-failure --timeout 120
 Assert-LastExit "CTest native QA"
 
+# Product code must never carry the operator callsign as configuration.
+$Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp","mshv\apply_dxweaver_v050_patch.py" -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
+if ($Hardcoded) { throw "Hardcoded station identity detected in product integration" }
+
 # 2. Clone audited radio/DSP foundation and inject DXWeaver in-process core.
 Remove-Item -Recurse -Force mshv-upstream -ErrorAction SilentlyContinue
 git clone --filter=blob:none https://github.com/LZ2HV/MSHV.git mshv-upstream
@@ -41,6 +45,13 @@ Assert-LastExit "DXWeaver patch syntax"
 Assert-LastExit "DXWeaver native integration patch"
 git -C mshv-upstream diff --check
 Assert-LastExit "Patched source diff check"
+
+$ProText = Get-Content "mshv-upstream\MSHV_WIN64.pro" -Raw
+if ($ProText -notmatch [regex]::Escape("QMAKE_CXXFLAGS += -std=gnu++11 -pedantic-errors")) {
+    throw "Legacy MSHV gnu++11 dialect gate failed"
+}
+if ($ProText -match "gnu\+\+17") { throw "C++17 leaked into legacy MSHV project" }
+Write-Host "PASS: legacy radio/DSP remains gnu++11; dxw_core is strict C++11" -ForegroundColor Green
 
 # 3. Build the single native DXWeaver executable using the upstream Qt/qmake project.
 $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
@@ -60,8 +71,12 @@ $Pkg = Join-Path $Root "dxweaver-package"
 Remove-Item -Recurse -Force $Pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $Pkg | Out-Null
 Copy-Item "mshv-upstream\bin\*" $Pkg -Recurse -Force
+# Never ship the upstream author's sample log into the user's history index.
 Remove-Item -Recurse -Force "$Pkg\log", "$Pkg\AllTxtMonthly" -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$Pkg\log" | Out-Null
 Get-ChildItem $Pkg -Recurse -File -Include *.ttf,*.otf,*.woff,*.woff2 -ErrorAction SilentlyContinue | Remove-Item -Force
+
+if (-not (Test-Path "$Pkg\settings\database\cty.dat")) { throw "cty.dat missing from package" }
 
 $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
 & $windeployqt --release --compiler-runtime --no-translations --dir $Pkg "$Pkg\DXWeaver.exe"
@@ -73,15 +88,22 @@ $qtBin = Split-Path -Parent $qmake
 $qtRoot = Split-Path -Parent $qtBin
 $qtPlugins = Join-Path $qtRoot "plugins"
 $mingwBin = Split-Path -Parent $make
-foreach ($dll in @("Qt5Core.dll","Qt5Gui.dll","Qt5Network.dll","Qt5WebSockets.dll","Qt5Widgets.dll")) {
+foreach ($dll in @("Qt5Core.dll","Qt5Gui.dll","Qt5Network.dll","Qt5WebSockets.dll","Qt5Widgets.dll","Qt5Sql.dll")) {
     if (-not (Test-Path "$Pkg\$dll")) { Copy-Item (Join-Path $qtBin $dll) $Pkg -Force }
 }
 New-Item -ItemType Directory -Force "$Pkg\platforms" | Out-Null
 if (-not (Test-Path "$Pkg\platforms\qwindows.dll")) {
     Copy-Item (Join-Path $qtPlugins "platforms\qwindows.dll") "$Pkg\platforms\qwindows.dll" -Force
 }
+New-Item -ItemType Directory -Force "$Pkg\sqldrivers" | Out-Null
+if (-not (Test-Path "$Pkg\sqldrivers\qsqlite.dll")) {
+    Copy-Item (Join-Path $qtPlugins "sqldrivers\qsqlite.dll") "$Pkg\sqldrivers\qsqlite.dll" -Force
+}
 foreach ($dll in @("libgcc_s_seh-1.dll","libstdc++-6.dll","libwinpthread-1.dll")) {
     if (-not (Test-Path "$Pkg\$dll")) { Copy-Item (Join-Path $mingwBin $dll) $Pkg -Force }
+}
+foreach ($required in @("DXWeaver.exe","Qt5Core.dll","Qt5Widgets.dll","Qt5Sql.dll","platforms\qwindows.dll","sqldrivers\qsqlite.dll","settings\database\cty.dat")) {
+    if (-not (Test-Path (Join-Path $Pkg $required))) { throw "Packaged runtime missing: $required" }
 }
 
 # GPL/attribution stays with the derivative product even though its visual identity is DXWeaver.
@@ -104,6 +126,7 @@ if ($p.HasExited) {
 } else {
     Stop-Process -Id $p.Id -Force
 }
+Write-Host "PASS: packaged GUI smoke test" -ForegroundColor Green
 
 # 6. Corresponding source archive for GPL compliance/reproducibility.
 cmd /c "git -C mshv-upstream diff --binary > dxweaver-package\DXWeaver-0.5.0-MSHV.patch"
@@ -119,6 +142,7 @@ Remove-Item -Recurse -Force "$SourceStage\mshv-upstream\.git", "$SourceStage\msh
 New-Item -ItemType Directory -Force installer-output | Out-Null
 tar.exe -a -c -f "installer-output\DXWeaver-0.5.0-Source.zip" -C $SourceStage .
 Assert-LastExit "Source archive"
+if (-not (Test-Path "installer-output\DXWeaver-0.5.0-Source.zip")) { throw "GPL source archive missing" }
 
 # 7. Per-user installer.
 $Iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
