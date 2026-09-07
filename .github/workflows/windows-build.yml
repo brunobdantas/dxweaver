@@ -7,14 +7,14 @@ on:
       - "CMakeLists.txt"
       - "src/native/**"
       - "tests/native/**"
-      - "mshv/apply_dxweaver_v051_patch.py"
+      - "mshv/apply_dxweaver_v052_patch.py"
       - "scripts/build_windows.ps1"
-      - "installer/DXWeaver-0.5.1.iss"
+      - "installer/DXWeaver-0.5.2.iss"
       - ".github/workflows/windows-build.yml"
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "Publish/update v0.5.1 GitHub Release"
+        description: "Publish/update v0.5.2 GitHub Release"
         type: boolean
         default: true
 
@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: dxweaver-native-051-${{ github.ref }}
+  group: dxweaver-native-052-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,42 +72,41 @@ jobs:
       - name: Upload official Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DXWeaver-0.5.1-Windows
+          name: DXWeaver-0.5.2-Windows
           path: |
-            installer-output/DXWeaver-0.5.1-Setup.exe
-            installer-output/DXWeaver-0.5.1-SHA256.txt
-            installer-output/DXWeaver-0.5.1-Source.zip
+            installer-output/DXWeaver-0.5.2-Setup.exe
+            installer-output/DXWeaver-0.5.2-SHA256.txt
+            installer-output/DXWeaver-0.5.2-Source.zip
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish v0.5.1 Release
+      - name: Publish v0.5.2 Release
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.5.1
+          tag_name: v0.5.2
           target_commitish: ${{ github.sha }}
-          name: DXWeaver v0.5.1 Native
+          name: DXWeaver v0.5.2 Native
           body: |
-            DXWeaver v0.5.1 — cockpit/UI corrective release.
+            DXWeaver v0.5.2 — native HUNT activation corrective release.
 
-            Safety/QA gates:
-            - in-process dxw:: QSO state machine; no UDP control dependency for automation;
-            - directed caller preemption only while a HUNT target is unanswered;
-            - engaged QSO lock through report/R-report/RR73/73;
-            - fail-safe abort/cooldown when the active HUNT target works a third party;
-            - CAT-loss simulation forces HALT + FAULT + DISARM;
-            - resilient history-provider fallback for locked/corrupt HRD data;
-            - 120-candidate scoring performance gate under 5 ms per batch;
-            - exact FT8 decision windows at 02/17/32/47 UTC seconds;
-            - DXWeaver Control Panel is owned by MSHV's master QVBoxLayout; no absolute geometry/z-order;
-            - visible Candidates Matrix is driven directly by the native CandidateScorer ranking;
-            - application-wide DxTheme.qss dark design system is packaged and validated;
-            - packaged GUI smoke test before installer creation.
+            Functional correction:
+            - HUNT no longer routes a ranked CQ station into passive SetTextForAutoSeq;
+            - ranked CQ targets use MSHV's native decode-selection path (DecListTextAll), equivalent to selecting/double-clicking the station in the decode list;
+            - ANSWER/direct callers remain on the native AutoSeq reaction path;
+            - HUNT and ANSWER action types are distinct and covered by CTest;
+            - CI fails closed unless both native routes are present in the patched MSHV source.
 
-            The radio/DSP foundation is a GPL-3.0 derivative of official MSHV source at the pinned commit recorded in the source bundle. Required license/source notices are included.
+            Existing v0.5.1 cockpit/layout corrections remain intact:
+            - DXWeaver panel and Candidates Matrix are owned by MSHV's master QVBoxLayout;
+            - application-wide dark design system;
+            - packaged GUI smoke test;
+            - GPL corresponding source bundle.
+
+            The radio/DSP foundation is a GPL-3.0 derivative of official MSHV source at the pinned commit recorded in the source bundle.
           files: |
-            installer-output/DXWeaver-0.5.1-Setup.exe
-            installer-output/DXWeaver-0.5.1-SHA256.txt
-            installer-output/DXWeaver-0.5.1-Source.zip
+            installer-output/DXWeaver-0.5.2-Setup.exe
+            installer-output/DXWeaver-0.5.2-SHA256.txt
+            installer-output/DXWeaver-0.5.2-Source.zip
           fail_on_unmatched_files: true
           overwrite_files: true
