@@ -104,3 +104,19 @@ TEST(QsoStateMachine, NativeAutoIsEnsuredBeforeDedicatedHuntSelection) {
     EXPECT_LT(indexOf(actions, ActionType::EnsureAuto), indexOf(actions, ActionType::SelectHuntTarget));
     EXPECT_FALSE(has(actions, ActionType::SelectTarget, "9Y4C"));
 }
+
+TEST(QsoStateMachine, UnansweredHuntTimeoutHaltsAndMovesToFreshRunnerUp) {
+    QsoStateMachine sm("PU2BRU");
+    sm.arm(Strategy::Hunt);
+    sm.startHunt(c("YV6BXN"));
+    Candidate next = c("PT2OP");
+
+    const auto actions = sm.onTimeout(&next);
+    EXPECT_TRUE(has(actions, ActionType::HaltTx, "YV6BXN"));
+    EXPECT_TRUE(has(actions, ActionType::ApplyCooldown, "YV6BXN"));
+    EXPECT_TRUE(has(actions, ActionType::ClearTarget, "YV6BXN"));
+    EXPECT_TRUE(has(actions, ActionType::SelectHuntTarget, "PT2OP"));
+    EXPECT_TRUE(has(actions, ActionType::StartHunt, "PT2OP"));
+    EXPECT_EQ(sm.activeCall(), "PT2OP");
+    EXPECT_EQ(sm.state(), QsoState::HuntCalling);
+}
