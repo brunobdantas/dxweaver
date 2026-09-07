@@ -79,7 +79,7 @@ std::vector<Action> QsoStateMachine::startHunt(const Candidate& candidate) {
     state_ = QsoState::HuntCalling;
     return {
         {ActionType::EnsureAuto, candidate.call, "native AutoSeq must own exchange"},
-        {ActionType::SelectTarget, candidate.call, "highest ranked HUNT candidate"},
+        {ActionType::SelectHuntTarget, candidate.call, "highest ranked HUNT candidate"},
         {ActionType::StartHunt, candidate.call, "start native HUNT"}
     };
 }
