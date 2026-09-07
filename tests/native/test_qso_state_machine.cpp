@@ -25,6 +25,8 @@ TEST(QsoStateMachine, DirectedCallerPreemptsUnansweredHuntAndLocksCaller) {
     auto actions = sm.onDirectedCaller(c("LU2DPG"));
     EXPECT_TRUE(has(actions, ActionType::HaltTx, "9Y4C"));
     EXPECT_TRUE(has(actions, ActionType::ApplyCooldown, "9Y4C"));
+    EXPECT_TRUE(has(actions, ActionType::SelectTarget, "LU2DPG"));
+    EXPECT_FALSE(has(actions, ActionType::SelectHuntTarget, "LU2DPG"));
     EXPECT_TRUE(has(actions, ActionType::StartAnswer, "LU2DPG"));
     EXPECT_TRUE(has(actions, ActionType::LockTarget, "LU2DPG"));
     EXPECT_EQ(sm.activeCall(), "LU2DPG");
@@ -45,6 +47,7 @@ TEST(QsoStateMachine, EngagedHuntIsInviolableAgainstNewCaller) {
     EXPECT_TRUE(has(actions, ActionType::IgnoreCaller, "LU2DPG"));
     EXPECT_FALSE(has(actions, ActionType::HaltTx));
     EXPECT_FALSE(has(actions, ActionType::SelectTarget, "LU2DPG"));
+    EXPECT_FALSE(has(actions, ActionType::SelectHuntTarget, "LU2DPG"));
     EXPECT_EQ(sm.activeCall(), "9Y4C");
     EXPECT_EQ(sm.state(), QsoState::Locked);
 }
@@ -58,7 +61,8 @@ TEST(QsoStateMachine, BusyHuntTargetAbortsAndSelectsRunnerUp) {
     auto actions = sm.onTargetAnswersThirdParty("9Y4C", "KK4CDK", &next);
     EXPECT_TRUE(has(actions, ActionType::HaltTx, "9Y4C"));
     EXPECT_TRUE(has(actions, ActionType::ApplyCooldown, "9Y4C"));
-    EXPECT_TRUE(has(actions, ActionType::SelectTarget, "IZ0DHC"));
+    EXPECT_TRUE(has(actions, ActionType::SelectHuntTarget, "IZ0DHC"));
+    EXPECT_FALSE(has(actions, ActionType::SelectTarget, "IZ0DHC"));
     EXPECT_TRUE(has(actions, ActionType::StartHunt, "IZ0DHC"));
     EXPECT_EQ(sm.activeCall(), "IZ0DHC");
     EXPECT_EQ(sm.state(), QsoState::HuntCalling);
@@ -91,11 +95,12 @@ TEST(QsoStateMachine, QsoCompletesOnlyForActiveTarget) {
     EXPECT_TRUE(sm.activeCall().empty());
 }
 
-TEST(QsoStateMachine, NativeAutoIsEnsuredBeforeTargetSelection) {
+TEST(QsoStateMachine, NativeAutoIsEnsuredBeforeDedicatedHuntSelection) {
     QsoStateMachine sm("PU2BRU");
     sm.arm(Strategy::Hunt);
     const auto actions = sm.startHunt(c("9Y4C"));
     ASSERT_GE(indexOf(actions, ActionType::EnsureAuto), 0);
-    ASSERT_GE(indexOf(actions, ActionType::SelectTarget), 0);
-    EXPECT_LT(indexOf(actions, ActionType::EnsureAuto), indexOf(actions, ActionType::SelectTarget));
+    ASSERT_GE(indexOf(actions, ActionType::SelectHuntTarget), 0);
+    EXPECT_LT(indexOf(actions, ActionType::EnsureAuto), indexOf(actions, ActionType::SelectHuntTarget));
+    EXPECT_FALSE(has(actions, ActionType::SelectTarget, "9Y4C"));
 }
