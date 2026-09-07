@@ -20,8 +20,6 @@ bool DxwControlPanel::applyGlobalTheme(const QString& appPath) {
         return true;
     }
 
-    // Fail visibly dark rather than silently falling back to the classic light
-    // MSHV palette when the external design-system file is missing.
     qApp->setStyleSheet(
         "QWidget{background:#0B0F14;color:#E6EDF3;}"
         "QFrame{background:#111821;border-color:#263341;}"
@@ -43,7 +41,7 @@ DxwControlPanel::DxwControlPanel(QWidget* parent) : QFrame(parent) {
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(7);
 
-    QLabel* brand = new QLabel("DXWEAVER 0.5.2", this);
+    QLabel* brand = new QLabel("DXWEAVER 0.5.3", this);
     brand->setObjectName("dxwBrand");
     state_ = new QLabel("DISARMED", this);
     state_->setObjectName("dxwState");
