@@ -249,7 +249,7 @@ public slots:
 
     bridge = upstream / "src/native/mshv_bridge/DxwMshvBridge.cpp"
     require_once(bridge, "huntWatchdog_.shouldExpire", "HUNT watchdog expiry integration")
-    require_once(bridge, "freshHuntPool", "fresh CQ-only HUNT pool")
+    require_once(bridge, "std::vector<Candidate> DxwMshvBridge::freshHuntPool", "fresh CQ-only HUNT pool")
 
     print(f"DXWeaver {VERSION} native integration applied successfully")
 
