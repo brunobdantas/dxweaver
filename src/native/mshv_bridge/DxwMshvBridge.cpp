@@ -111,9 +111,9 @@ Candidate DxwMshvBridge::candidateFrom(const QStringList& decode, const QString&
         c.confirmed = facts.confirmed;
         if (!c.entity.empty()) {
             c.newDxcc = !facts.entityWorked;
-            c.newBand = !c.band.empty() && !facts.entityBandWorked;
+            c.newBand = !facts.entityBandWorked;
             c.newMode = !facts.entityModeWorked;
-            c.newSlot = !c.band.empty() && !facts.entitySlotWorked;
+            c.newSlot = !facts.entitySlotWorked;
         } else {
             c.newBand = !c.band.empty() && !facts.workedBand;
             c.newMode = !facts.workedMode;
@@ -195,6 +195,14 @@ void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
             break;
         case ActionType::EnsureAuto:
             emit ensureAutoRequested();
+            break;
+        case ActionType::SelectHuntTarget:
+            if (rawByCall_.contains(call)) {
+                const QStringList decode = rawByCall_.value(call);
+                if (decode.size() > 9) {
+                    emit selectHuntDecode(decode.value(4), call, decode.value(0), decode.value(1), decode.value(9));
+                }
+            }
             break;
         case ActionType::SelectTarget:
             if (rawByCall_.contains(call)) emit selectDecode(rawByCall_.value(call));
