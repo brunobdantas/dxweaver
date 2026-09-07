@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DXWeaverNative VERSION 0.5.1 LANGUAGES CXX)
+project(DXWeaverNative VERSION 0.5.3 LANGUAGES CXX)
 
 # GoogleTest 1.15 may use a newer dialect internally. The product core itself is
 # explicitly pinned to strict C++11 below and is compiled independently from it.
@@ -12,6 +12,7 @@ add_library(dxw_core STATIC
     src/native/dxw/CtyResolver.cpp
     src/native/dxw/Ft8SlotClock.cpp
     src/native/dxw/HistoryIndex.cpp
+    src/native/dxw/HuntWatchdog.cpp
     src/native/dxw/QsoStateMachine.cpp
 )
 target_include_directories(dxw_core PUBLIC src/native)
@@ -43,6 +44,7 @@ if(BUILD_TESTING)
       tests/native/test_station_identity.cpp
       tests/native/test_history_index.cpp
       tests/native/test_cty_resolver.cpp
+      tests/native/test_hunt_watchdog.cpp
   )
   set_target_properties(dxw_native_tests PROPERTIES
       CXX_STANDARD 14
