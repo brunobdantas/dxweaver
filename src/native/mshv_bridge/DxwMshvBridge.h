@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QDateTime>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
@@ -10,6 +11,7 @@
 #include "../dxw/CandidateScorer.h"
 #include "../dxw/CtyResolver.h"
 #include "../dxw/Ft8SlotClock.h"
+#include "../dxw/HuntWatchdog.h"
 #include "../dxw/QsoStateMachine.h"
 #include "DxwHistoryCache.h"
 #include "../../HvTxW/hvqthloc.h"
@@ -62,6 +64,9 @@ private:
     void processActions(const std::vector<Action>& actions);
     void emitState();
     bool runnerUp(const QString& excluding, Candidate& result) const;
+    bool freshCqCandidate(const QString& call, const QDateTime& now) const;
+    std::vector<Candidate> freshHuntPool(const QDateTime& now, const QString& excluding = QString()) const;
+    void clearCandidateWindow();
 
     QString myCall_;
     QString myGrid_;
@@ -73,10 +78,13 @@ private:
     CtyResolver cty_;
     DxwHistoryCache history_;
     HvQthLoc qth_;
+    HuntWatchdog huntWatchdog_;
     QTimer clock_;
     QVector<Candidate> candidates_;
     QHash<QString, QStringList> rawByCall_;
     QHash<QString, QDateTime> cooldowns_;
+    QHash<QString, QDateTime> lastSeenByCall_;
+    QSet<QString> cqCandidates_;
     QStringList matrixRows_;
     int lastDecisionSecond_{-1};
 };
