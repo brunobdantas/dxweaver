@@ -8,6 +8,8 @@
 namespace dxw {
 namespace {
 
+const qint64 kFreshCqCandidateMs = 20000;
+
 QString newFlag(bool value) {
     return value ? QStringLiteral("NEW") : QStringLiteral("-");
 }
@@ -137,6 +139,36 @@ void DxwMshvBridge::upsertCandidate(const Candidate& candidate) {
     candidates_.push_back(candidate);
 }
 
+void DxwMshvBridge::clearCandidateWindow() {
+    candidates_.clear();
+    cqCandidates_.clear();
+    lastSeenByCall_.clear();
+}
+
+bool DxwMshvBridge::freshCqCandidate(const QString& call, const QDateTime& now) const {
+    const QString normalized = call.toUpper();
+    if (!cqCandidates_.contains(normalized)) return false;
+    const QHash<QString, QDateTime>::const_iterator seen = lastSeenByCall_.constFind(normalized);
+    if (seen == lastSeenByCall_.constEnd()) return false;
+    if (seen.value().msecsTo(now) > kFreshCqCandidateMs) return false;
+    const QHash<QString, QDateTime>::const_iterator cooldown = cooldowns_.constFind(normalized);
+    if (cooldown != cooldowns_.constEnd() && cooldown.value() > now) return false;
+    return true;
+}
+
+std::vector<Candidate> DxwMshvBridge::freshHuntPool(const QDateTime& now, const QString& excluding) const {
+    std::vector<Candidate> pool;
+    pool.reserve(static_cast<std::size_t>(candidates_.size()));
+    const QString excluded = excluding.toUpper();
+    for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it) {
+        const QString call = QString::fromStdString(it->call).toUpper();
+        if (!excluded.isEmpty() && call == excluded) continue;
+        if (!freshCqCandidate(call, now)) continue;
+        pool.push_back(*it);
+    }
+    return pool;
+}
+
 void DxwMshvBridge::publishCandidateMatrix(bool rebuildRows) {
     if (rebuildRows) {
         matrixRows_.clear();
@@ -175,11 +207,7 @@ void DxwMshvBridge::publishCandidateMatrix(bool rebuildRows) {
 }
 
 bool DxwMshvBridge::runnerUp(const QString& excluding, Candidate& result) const {
-    std::vector<Candidate> pool;
-    pool.reserve(static_cast<std::size_t>(candidates_.size()));
-    for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it) {
-        if (QString::fromStdString(it->call) != excluding) pool.push_back(*it);
-    }
+    const std::vector<Candidate> pool = freshHuntPool(QDateTime::currentDateTimeUtc(), excluding);
     const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
     if (ranked.empty()) return false;
     result = ranked.front().candidate;
@@ -188,7 +216,7 @@ bool DxwMshvBridge::runnerUp(const QString& excluding, Candidate& result) const 
 
 void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
     for (std::vector<Action>::const_iterator it = actions.begin(); it != actions.end(); ++it) {
-        const QString call = QString::fromStdString(it->call);
+        const QString call = QString::fromStdString(it->call).toUpper();
         switch (it->type) {
         case ActionType::HaltTx:
             emit haltTxRequested();
@@ -209,6 +237,18 @@ void DxwMshvBridge::processActions(const std::vector<Action>& actions) {
             break;
         case ActionType::ApplyCooldown:
             if (!call.isEmpty()) cooldowns_.insert(call, QDateTime::currentDateTimeUtc().addSecs(60));
+            break;
+        case ActionType::StartHunt:
+            huntWatchdog_.start(it->call, QDateTime::currentMSecsSinceEpoch());
+            break;
+        case ActionType::LockTarget:
+            huntWatchdog_.engage(it->call);
+            break;
+        case ActionType::StartAnswer:
+        case ActionType::ClearTarget:
+        case ActionType::Disarm:
+        case ActionType::EnterFault:
+            huntWatchdog_.clear();
             break;
         default:
             break;
@@ -238,7 +278,7 @@ void DxwMshvBridge::setStationIdentity(QString call, QString grid) {
     const std::vector<Action> actions = sm_.updateStationIdentity(call.toStdString(), grid.toStdString());
     myCall_ = call;
     myGrid_ = grid;
-    candidates_.clear();
+    clearCandidateWindow();
     rawByCall_.clear();
     matrixRows_.clear();
     if (!actions.empty()) processActions(actions);
@@ -252,7 +292,7 @@ void DxwMshvBridge::setBand(QString band) {
     band = band.trimmed().toLower();
     if (band == band_) return;
     band_ = band;
-    candidates_.clear();
+    clearCandidateWindow();
     rawByCall_.clear();
     matrixRows_.clear();
     emitState();
@@ -281,7 +321,7 @@ void DxwMshvBridge::halt() {
 void DxwMshvBridge::onQsoLogged(QStringList) {
     const std::string active = sm_.activeCall();
     if (!active.empty()) processActions(sm_.onQsoLogged(active));
-    candidates_.clear();
+    clearCandidateWindow();
     rawByCall_.clear();
     matrixRows_.clear();
     history_.reload();
@@ -300,6 +340,7 @@ void DxwMshvBridge::onDecode(QStringList decode) {
     if (tokens.size() >= 2 && tokens.at(0) == myCall_ && looksLikeCall(tokens.at(1))) {
         const QString sender = tokens.at(1);
         rawByCall_.insert(sender, decode);
+        lastSeenByCall_.insert(sender, QDateTime::currentDateTimeUtc());
         Candidate caller = candidateFrom(decode, sender);
         upsertCandidate(caller);
         publishCandidateMatrix(true);
@@ -319,6 +360,7 @@ void DxwMshvBridge::onDecode(QStringList decode) {
             const bool hasNext = runnerUp(active, next);
             processActions(sm_.onTargetAnswersThirdParty(
                 active.toStdString(), third.toStdString(), hasNext ? &next : nullptr));
+            clearCandidateWindow();
             return;
         }
     }
@@ -326,27 +368,48 @@ void DxwMshvBridge::onDecode(QStringList decode) {
     const QString cqCall = findCqCall(tokens);
     if (cqCall.isEmpty()) return;
     Candidate c = candidateFrom(decode, cqCall);
+    const QDateTime now = QDateTime::currentDateTimeUtc();
     rawByCall_.insert(cqCall, decode);
+    lastSeenByCall_.insert(cqCall, now);
+    cqCandidates_.insert(cqCall);
+    if (!active.isEmpty() && active == cqCall && sm_.activeKind() == TargetKind::Hunt)
+        huntWatchdog_.observe(cqCall.toStdString(), now.toMSecsSinceEpoch());
     upsertCandidate(c);
     emitState();
     publishCandidateMatrix(true);
 }
 
 void DxwMshvBridge::onClock() {
-    if (!sm_.armed() || sm_.state() != QsoState::Idle || strategy_ == Strategy::Answer) return;
-    const QTime t = QDateTime::currentDateTimeUtc().time();
+    if (!sm_.armed()) return;
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QString active = QString::fromStdString(sm_.activeCall()).toUpper();
+
+    if (sm_.state() == QsoState::HuntCalling && sm_.activeKind() == TargetKind::Hunt && !sm_.engaged()) {
+        if (!huntWatchdog_.active() || QString::fromStdString(huntWatchdog_.call()).toUpper() != active)
+            huntWatchdog_.start(active.toStdString(), now.toMSecsSinceEpoch());
+
+        if (huntWatchdog_.shouldExpire(now.toMSecsSinceEpoch())) {
+            Candidate next;
+            const bool hasNext = runnerUp(active, next);
+            processActions(sm_.onTimeout(hasNext ? &next : nullptr));
+            clearCandidateWindow();
+        }
+        return;
+    }
+
+    if (sm_.state() != QsoState::Idle || strategy_ == Strategy::Answer) return;
+
+    const QTime t = now.time();
     if (!Ft8SlotClock::isDecisionSecond(t.second())) return;
     if (lastDecisionSecond_ == t.second()) return;
     lastDecisionSecond_ = t.second();
 
-    std::vector<Candidate> pool;
-    pool.reserve(static_cast<std::size_t>(candidates_.size()));
-    for (QVector<Candidate>::const_iterator it = candidates_.constBegin(); it != candidates_.constEnd(); ++it)
-        pool.push_back(*it);
+    const std::vector<Candidate> pool = freshHuntPool(now);
     const std::vector<RankedCandidate> ranked = scorer_.rank(pool);
     publishCandidateMatrix(true);
     if (!ranked.empty()) processActions(sm_.startHunt(ranked.front().candidate));
-    candidates_.clear();
+    clearCandidateWindow();
     emitState();
 }
 
