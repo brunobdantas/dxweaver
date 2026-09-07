@@ -3,9 +3,9 @@ Set-StrictMode -Version Latest
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-$Version = "0.5.2"
+$Version = "0.5.3"
 $PinnedMshv = "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf"
-$Patcher = "mshv/apply_dxweaver_v052_patch.py"
+$Patcher = "mshv/apply_dxweaver_v053_patch.py"
 
 function Assert-LastExit([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
@@ -31,8 +31,7 @@ Assert-LastExit "CTest native QA"
 $Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp",$Patcher -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
 if ($Hardcoded) { throw "Hardcoded station identity detected in product integration" }
 
-# HUNT and ANSWER intentionally use different native MSHV pathways. This gate
-# prevents a future refactor from routing CQ hunting back into passive AutoSeq.
+# HUNT and ANSWER intentionally use different native MSHV pathways.
 $DomainText = Get-Content "src\native\dxw\Domain.h" -Raw
 $SmText = Get-Content "src\native\dxw\QsoStateMachine.cpp" -Raw
 $BridgeText = Get-Content "src\native\mshv_bridge\DxwMshvBridge.cpp" -Raw
@@ -44,6 +43,22 @@ foreach ($contract in @(
     if (($DomainText + $SmText + $BridgeText) -notmatch [regex]::Escape($contract)) { throw "HUNT native selection contract missing: $contract" }
 }
 Write-Host "PASS: HUNT uses dedicated native decode-selection contract" -ForegroundColor Green
+
+# HUNT liveness is a mandatory TX-safety contract. The bridge must actually
+# consume the watchdog; having an unused timeout method in the state machine is
+# not sufficient.
+$WatchdogText = Get-Content "src\native\dxw\HuntWatchdog.h" -Raw
+foreach ($contract in @(
+    "kStaleAfterMs = 30000",
+    "kHardTimeoutMs = 45000",
+    "huntWatchdog_.shouldExpire",
+    "sm_.onTimeout",
+    "freshHuntPool",
+    "cqCandidates_"
+)) {
+    if (($WatchdogText + $BridgeText) -notmatch [regex]::Escape($contract)) { throw "HUNT liveness contract missing: $contract" }
+}
+Write-Host "PASS: unanswered HUNT has stale-target watchdog and fresh-CQ-only pool" -ForegroundColor Green
 
 # UI source gate: production widgets themselves may not use absolute panel
 # geometry/z-order. The patcher intentionally contains those token strings in
@@ -77,9 +92,12 @@ if ($ProText -notmatch [regex]::Escape("QMAKE_CXXFLAGS += -std=gnu++11 -pedantic
     throw "Legacy MSHV gnu++11 dialect gate failed"
 }
 if ($ProText -match "gnu\+\+17") { throw "C++17 leaked into legacy MSHV project" }
+foreach ($requiredNative in @("src/native/dxw/HuntWatchdog.h", "src/native/dxw/HuntWatchdog.cpp")) {
+    if ($ProText -notmatch [regex]::Escape($requiredNative)) { throw "HUNT watchdog missing from qmake product: $requiredNative" }
+}
 Write-Host "PASS: legacy radio/DSP remains gnu++11; dxw_core is strict C++11" -ForegroundColor Green
 
-# Structural UI + native HUNT route gate against fully patched upstream source.
+# Structural UI + native route gate against fully patched upstream source.
 $PatchedMain = Get-Content "mshv-upstream\src\main_ms.cpp" -Raw
 foreach ($requiredLayout in @(
     "V_l->insertWidget(0, dxwPanel);",
@@ -95,13 +113,17 @@ foreach ($requiredLayout in @(
     if ($PatchedMain -notmatch [regex]::Escape($requiredLayout)) { throw "Patched MSHV contract missing: $requiredLayout" }
 }
 if ($PatchedMain -match "dxwPanel->setGeometry|dxwPanel->raise\(") { throw "Patched main window still contains floating DXWeaver panel geometry" }
+$PatchedBridge = Get-Content "mshv-upstream\src\native\mshv_bridge\DxwMshvBridge.cpp" -Raw
+foreach ($requiredSafety in @("huntWatchdog_.shouldExpire", "sm_.onTimeout", "freshHuntPool", "cqCandidates_.insert")) {
+    if ($PatchedBridge -notmatch [regex]::Escape($requiredSafety)) { throw "Patched HUNT liveness contract missing: $requiredSafety" }
+}
 $PatchedTheme = "mshv-upstream\bin\settings\resources\dxweaver\DxTheme.qss"
 if (-not (Test-Path $PatchedTheme)) { throw "Patched upstream theme resource missing" }
 $ThemeText = Get-Content $PatchedTheme -Raw
 foreach ($token in @("#0B0F14", "#111821", "#263341", "#E6EDF3", "#B63A3A", "QTableWidget#dxwCandidatesTable")) {
     if ($ThemeText -notmatch [regex]::Escape($token)) { throw "DXWeaver design-system token missing: $token" }
 }
-Write-Host "PASS: DXWeaver layout, Candidate Matrix, dark theme and HUNT/ANSWER routes" -ForegroundColor Green
+Write-Host "PASS: DXWeaver layout, Candidate Matrix, dark theme, routes and HUNT watchdog" -ForegroundColor Green
 
 # 3. Build the single native DXWeaver executable using the upstream Qt/qmake project.
 $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
@@ -121,7 +143,6 @@ $Pkg = Join-Path $Root "dxweaver-package"
 Remove-Item -Recurse -Force $Pkg -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $Pkg | Out-Null
 Copy-Item "mshv-upstream\bin\*" $Pkg -Recurse -Force
-# Never ship the upstream author's sample log into the user's history index.
 Remove-Item -Recurse -Force "$Pkg\log", "$Pkg\AllTxtMonthly" -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$Pkg\log" | Out-Null
 Get-ChildItem $Pkg -Recurse -File -Include *.ttf,*.otf,*.woff,*.woff2 -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -166,7 +187,6 @@ foreach ($required in @(
     if (-not (Test-Path (Join-Path $Pkg $required))) { throw "Packaged runtime missing: $required" }
 }
 
-# GPL/attribution stays with the derivative product even though its visual identity is DXWeaver.
 Copy-Item "mshv-upstream\COPYING.txt" "$Pkg\COPYING-GPL-3.0.txt" -Force
 @"
 DXWeaver $Version
