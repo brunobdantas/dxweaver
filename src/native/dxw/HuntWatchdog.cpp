@@ -4,6 +4,9 @@
 
 namespace dxw {
 
+const std::int64_t HuntWatchdog::kStaleAfterMs;
+const std::int64_t HuntWatchdog::kHardTimeoutMs;
+
 void HuntWatchdog::start(const std::string& call, std::int64_t nowMs) noexcept {
     call_ = call;
     startedMs_ = nowMs;
