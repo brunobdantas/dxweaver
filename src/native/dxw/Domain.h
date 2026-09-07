@@ -15,6 +15,7 @@ enum class ExchangeStage { Grid, Report, RReport, RRR, RR73, Final73, Unknown };
 enum class ActionType {
     HaltTx,
     EnsureAuto,
+    SelectHuntTarget,
     SelectTarget,
     StartHunt,
     StartAnswer,
@@ -33,7 +34,7 @@ struct Action {
 
     Action() : type(ActionType::HaltTx) {}
     Action(ActionType actionType, std::string actionCall, std::string actionReason)
-        : type(actionType), call(actionCall), reason(actionReason) {}
+        : type(actionType), call(std::move(actionCall)), reason(std::move(actionReason)) {}
 };
 
 struct Candidate {
