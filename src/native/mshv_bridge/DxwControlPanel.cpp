@@ -43,7 +43,7 @@ DxwControlPanel::DxwControlPanel(QWidget* parent) : QFrame(parent) {
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(7);
 
-    QLabel* brand = new QLabel("DXWEAVER 0.5.1", this);
+    QLabel* brand = new QLabel("DXWEAVER 0.5.2", this);
     brand->setObjectName("dxwBrand");
     state_ = new QLabel("DISARMED", this);
     state_->setObjectName("dxwState");
