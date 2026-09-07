@@ -3,9 +3,9 @@ Set-StrictMode -Version Latest
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-$Version = "0.5.1"
+$Version = "0.5.2"
 $PinnedMshv = "8f93eb3e25056f0cb18699ef6c3bef3998c52cdf"
-$Patcher = "mshv/apply_dxweaver_v051_patch.py"
+$Patcher = "mshv/apply_dxweaver_v052_patch.py"
 
 function Assert-LastExit([string]$Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step failed with exit code $LASTEXITCODE" }
@@ -30,6 +30,20 @@ Assert-LastExit "CTest native QA"
 # Product code must never carry the operator callsign as configuration.
 $Hardcoded = Select-String -Path "src\native\mshv_bridge\DxwMshvBridge.h","src\native\mshv_bridge\DxwMshvBridge.cpp",$Patcher -SimpleMatch '"PU2BRU"' -ErrorAction SilentlyContinue
 if ($Hardcoded) { throw "Hardcoded station identity detected in product integration" }
+
+# HUNT and ANSWER intentionally use different native MSHV pathways. This gate
+# prevents a future refactor from routing CQ hunting back into passive AutoSeq.
+$DomainText = Get-Content "src\native\dxw\Domain.h" -Raw
+$SmText = Get-Content "src\native\dxw\QsoStateMachine.cpp" -Raw
+$BridgeText = Get-Content "src\native\mshv_bridge\DxwMshvBridge.cpp" -Raw
+foreach ($contract in @(
+    "SelectHuntTarget",
+    "ActionType::SelectHuntTarget",
+    "emit selectHuntDecode(decode.value(4), call, decode.value(0), decode.value(1), decode.value(9))"
+)) {
+    if (($DomainText + $SmText + $BridgeText) -notmatch [regex]::Escape($contract)) { throw "HUNT native selection contract missing: $contract" }
+}
+Write-Host "PASS: HUNT uses dedicated native decode-selection contract" -ForegroundColor Green
 
 # UI source gate: production widgets themselves may not use absolute panel
 # geometry/z-order. The patcher intentionally contains those token strings in
@@ -65,17 +79,20 @@ if ($ProText -notmatch [regex]::Escape("QMAKE_CXXFLAGS += -std=gnu++11 -pedantic
 if ($ProText -match "gnu\+\+17") { throw "C++17 leaked into legacy MSHV project" }
 Write-Host "PASS: legacy radio/DSP remains gnu++11; dxw_core is strict C++11" -ForegroundColor Green
 
-# Structural UI gate against the fully patched upstream source. This catches a
-# build that compiles but floats the DXWeaver controls behind the waterfall.
+# Structural UI + native HUNT route gate against fully patched upstream source.
 $PatchedMain = Get-Content "mshv-upstream\src\main_ms.cpp" -Raw
 foreach ($requiredLayout in @(
     "V_l->insertWidget(0, dxwPanel);",
     "V_l->insertWidget(1, dxwCandidates);",
     "candidateMatrixChanged(QStringList,QString)",
     "DxwControlPanel::applyGlobalTheme(App_Path)",
-    "dsty = true; // DXWeaver owns a single dark visual identity."
+    "dsty = true; // DXWeaver owns a single dark visual identity.",
+    "selectHuntDecode(QString,QString,QString,QString,QString)",
+    "DecListTextAll(QString,QString,QString,QString,QString)",
+    "selectDecode(QStringList)",
+    "SetTextForAutoSeq(QStringList)"
 )) {
-    if ($PatchedMain -notmatch [regex]::Escape($requiredLayout)) { throw "UI hierarchy contract missing: $requiredLayout" }
+    if ($PatchedMain -notmatch [regex]::Escape($requiredLayout)) { throw "Patched MSHV contract missing: $requiredLayout" }
 }
 if ($PatchedMain -match "dxwPanel->setGeometry|dxwPanel->raise\(") { throw "Patched main window still contains floating DXWeaver panel geometry" }
 $PatchedTheme = "mshv-upstream\bin\settings\resources\dxweaver\DxTheme.qss"
@@ -84,7 +101,7 @@ $ThemeText = Get-Content $PatchedTheme -Raw
 foreach ($token in @("#0B0F14", "#111821", "#263341", "#E6EDF3", "#B63A3A", "QTableWidget#dxwCandidatesTable")) {
     if ($ThemeText -notmatch [regex]::Escape($token)) { throw "DXWeaver design-system token missing: $token" }
 }
-Write-Host "PASS: DXWeaver layout, Candidate Matrix and dark-theme contracts" -ForegroundColor Green
+Write-Host "PASS: DXWeaver layout, Candidate Matrix, dark theme and HUNT/ANSWER routes" -ForegroundColor Green
 
 # 3. Build the single native DXWeaver executable using the upstream Qt/qmake project.
 $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
