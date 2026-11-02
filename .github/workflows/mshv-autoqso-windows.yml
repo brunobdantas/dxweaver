@@ -31,16 +31,28 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Clone pinned official MSHV
+      - name: Download pinned official MSHV source archive
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          git clone https://github.com/LZ2HV/MSHV.git mshv-upstream
-          if ($LASTEXITCODE -ne 0) { throw 'MSHV clone failed' }
-          git -C mshv-upstream checkout 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
-          if ($LASTEXITCODE -ne 0) { throw 'MSHV pinned checkout failed' }
-          $sha = (git -C mshv-upstream rev-parse HEAD).Trim()
-          if ($sha -ne '8f93eb3e25056f0cb18699ef6c3bef3998c52cdf') { throw "unexpected MSHV commit $sha" }
+          $sha = '8f93eb3e25056f0cb18699ef6c3bef3998c52cdf'
+          $zip = Join-Path $PWD 'mshv-pinned.zip'
+          $tmp = Join-Path $PWD 'mshv-extract'
+          Invoke-WebRequest -Uri "https://github.com/LZ2HV/MSHV/archive/$sha.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $tmp -Force
+          $src = Get-ChildItem $tmp -Directory | Select-Object -First 1
+          if (-not $src) { throw 'Pinned MSHV archive did not extract' }
+          Move-Item $src.FullName (Join-Path $PWD 'mshv-upstream')
+          Set-Content -Path 'mshv-upstream/.dxweaver-upstream-revision' -Value $sha -Encoding ascii
+
+          # Establish a local baseline so the derived-source archive and binary diff
+          # can be exported later even though upstream rewrote the public Git history.
+          git -C mshv-upstream init
+          if ($LASTEXITCODE -ne 0) { throw 'local source repository init failed' }
+          git -C mshv-upstream -c user.name='MSHV Snapshot CI' -c user.email='snapshot@autoqso.invalid' add -A
+          if ($LASTEXITCODE -ne 0) { throw 'source snapshot add failed' }
+          git -C mshv-upstream -c user.name='MSHV Snapshot CI' -c user.email='snapshot@autoqso.invalid' commit -m 'Official MSHV 2.76.7 rc017 source snapshot'
+          if ($LASTEXITCODE -ne 0) { throw 'source snapshot commit failed' }
 
       - name: Apply native AutoQSO integration
         shell: pwsh
