@@ -1,0 +1,186 @@
+name: MSHV AutoQSO Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'mshv/apply_dxweaver_v053_patch.py'
+      - 'src/native/dxw/**'
+      - 'src/native/mshv_bridge/**'
+      - '.github/workflows/mshv-autoqso-windows.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mshv-autoqso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout automation source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Clone pinned official MSHV
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone https://github.com/LZ2HV/MSHV.git mshv-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'MSHV clone failed' }
+          git -C mshv-upstream checkout 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf
+          if ($LASTEXITCODE -ne 0) { throw 'MSHV pinned checkout failed' }
+          $sha = (git -C mshv-upstream rev-parse HEAD).Trim()
+          if ($sha -ne '8f93eb3e25056f0cb18699ef6c3bef3998c52cdf') { throw "unexpected MSHV commit $sha" }
+
+      - name: Apply native AutoQSO integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m py_compile mshv/apply_dxweaver_v053_patch.py
+          if ($LASTEXITCODE -ne 0) { throw 'AutoQSO patcher syntax validation failed' }
+          python mshv/apply_dxweaver_v053_patch.py mshv-upstream
+          if ($LASTEXITCODE -ne 0) { throw 'AutoQSO integration patch failed' }
+          git -C mshv-upstream diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'patched MSHV diff check failed' }
+          git -C mshv-upstream diff --stat
+
+      - name: Install Qt 5.15.2 MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw81'
+          tools: 'tools_mingw,qt.tools.win64_mingw810'
+          cache: true
+
+      - name: Resolve MinGW tools
+        id: mingw
+        shell: pwsh
+        run: |
+          $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
+          $make = (Get-Command mingw32-make.exe -ErrorAction Stop).Source
+          "qmake=$qmake" >> $env:GITHUB_OUTPUT
+          "make=$make" >> $env:GITHUB_OUTPUT
+          qmake -v
+          g++ --version
+
+      - name: Build MSHV AutoQSO x64
+        shell: pwsh
+        working-directory: mshv-upstream
+        run: |
+          & '${{ steps.mingw.outputs.qmake }}' MSHV_WIN64.pro 'CONFIG+=release'
+          if ($LASTEXITCODE -ne 0) { throw "qmake failed with $LASTEXITCODE" }
+          & '${{ steps.mingw.outputs.make }}' -j2
+          if ($LASTEXITCODE -ne 0) { throw "MinGW build failed with $LASTEXITCODE" }
+          if (-not (Test-Path 'bin/DXWeaver.exe')) { throw 'DXWeaver.exe was not produced' }
+
+      - name: Stage portable application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $PWD 'MSHV-AutoQSO'
+          if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item 'mshv-upstream/bin/*' $pkg -Recurse -Force
+          Remove-Item -Recurse -Force "$pkg/log","$pkg/AllTxtMonthly" -ErrorAction SilentlyContinue
+          Get-ChildItem $pkg -Recurse -File -Include *.ttf,*.otf,*.woff,*.woff2 -ErrorAction SilentlyContinue | Remove-Item -Force
+          if (-not (Test-Path "$pkg/DXWeaver.exe")) { throw 'staged executable missing' }
+          Copy-Item "$pkg/DXWeaver.exe" "$pkg/MSHV-AutoQSO.exe" -Force
+
+          $qtBin = Join-Path $env:QT_ROOT_DIR 'bin'
+          $qtPlugins = $env:QT_PLUGIN_PATH
+          $mingwBin = Split-Path -Parent '${{ steps.mingw.outputs.make }}'
+          foreach ($dll in @('Qt5Core.dll','Qt5Gui.dll','Qt5Network.dll','Qt5Sql.dll','Qt5WebSockets.dll','Qt5Widgets.dll')) {
+            $src = Join-Path $qtBin $dll
+            if (-not (Test-Path $src)) { throw "required Qt runtime missing: $src" }
+            Copy-Item $src $pkg -Force
+          }
+          foreach ($dll in @('libEGL.dll','libGLESv2.dll','d3dcompiler_47.dll','opengl32sw.dll','Qt5Svg.dll')) {
+            $src = Join-Path $qtBin $dll
+            if (Test-Path $src) { Copy-Item $src $pkg -Force }
+          }
+          New-Item -ItemType Directory -Force "$pkg/platforms" | Out-Null
+          $qwindows = Join-Path $qtPlugins 'platforms/qwindows.dll'
+          if (-not (Test-Path $qwindows)) { throw 'qwindows.dll missing' }
+          Copy-Item $qwindows "$pkg/platforms/qwindows.dll" -Force
+          foreach ($pluginDir in @('styles','imageformats')) {
+            $srcDir = Join-Path $qtPlugins $pluginDir
+            if (Test-Path $srcDir) { Copy-Item $srcDir "$pkg/$pluginDir" -Recurse -Force }
+          }
+          foreach ($dll in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) {
+            $src = Join-Path $mingwBin $dll
+            if (-not (Test-Path $src)) { throw "required MinGW runtime missing: $src" }
+            Copy-Item $src $pkg -Force
+          }
+
+          Copy-Item 'mshv-upstream/COPYING.txt' "$pkg/COPYING-MSHV-GPL3.txt" -Force
+          @"
+          MSHV AutoQSO 0.5.3
+          Base: official MSHV source from https://github.com/LZ2HV/MSHV
+          Upstream commit: 8f93eb3e25056f0cb18699ef6c3bef3998c52cdf (MSHV 2.76.7 rc017)
+          AutoQSO integration: native HUNT/ANSWER/BOTH engine from DXWeaver 0.5.3
+          Derived work license: GPL-3.0
+          "@ | Set-Content "$pkg/BUILD-INFO.txt" -Encoding UTF8
+
+          $hash = (Get-FileHash "$pkg/MSHV-AutoQSO.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  MSHV-AutoQSO.exe" | Set-Content "$pkg/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Smoke test packaged executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Join-Path $PWD 'MSHV-AutoQSO'
+          $p = Start-Process -FilePath "$pkg/MSHV-AutoQSO.exe" -WorkingDirectory $pkg -PassThru
+          Start-Sleep -Seconds 10
+          $p.Refresh()
+          if ($p.HasExited) { throw "MSHV AutoQSO exited during startup, code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host 'Startup smoke test passed.'
+
+      - name: Export corresponding source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item 'mshv/apply_dxweaver_v053_patch.py' 'MSHV-AutoQSO/AutoQSO-Patch-Source.py' -Force
+          cmd /c "git -C mshv-upstream diff --binary > MSHV-AutoQSO\MSHV-AutoQSO-0.5.3.patch"
+          if ($LASTEXITCODE -ne 0) { throw 'failed to export patch' }
+          git -C mshv-upstream -c user.name='AutoQSO CI' -c user.email='ci@autoqso.invalid' add -A
+          git -C mshv-upstream -c user.name='AutoQSO CI' -c user.email='ci@autoqso.invalid' commit -m 'MSHV AutoQSO 0.5.3 native automation'
+          if ($LASTEXITCODE -ne 0) { throw 'failed to commit patched source' }
+          git -C mshv-upstream archive --format=zip --output="$PWD/MSHV-AutoQSO-0.5.3-Source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'source archive failed' }
+
+      - name: Create portable archive
+        shell: pwsh
+        run: |
+          tar.exe -a -c -f 'MSHV-AutoQSO-0.5.3-Windows.zip' -C 'MSHV-AutoQSO' .
+          if ($LASTEXITCODE -ne 0) { throw 'portable ZIP creation failed' }
+          $h1 = (Get-FileHash 'MSHV-AutoQSO-0.5.3-Windows.zip' -Algorithm SHA256).Hash
+          $h2 = (Get-FileHash 'MSHV-AutoQSO-0.5.3-Source.zip' -Algorithm SHA256).Hash
+          @(
+            "$h1  MSHV-AutoQSO-0.5.3-Windows.zip",
+            "$h2  MSHV-AutoQSO-0.5.3-Source.zip"
+          ) | Set-Content 'MSHV-AutoQSO-0.5.3-SHA256.txt' -Encoding ascii
+
+      - name: Upload MSHV AutoQSO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MSHV-AutoQSO-0.5.3-Windows
+          path: |
+            MSHV-AutoQSO/**
+            MSHV-AutoQSO-0.5.3-Windows.zip
+            MSHV-AutoQSO-0.5.3-Source.zip
+            MSHV-AutoQSO-0.5.3-SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
