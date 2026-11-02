@@ -36,7 +36,13 @@ def require_once(path: Path, text: str, label: str) -> None:
 
 
 def verify_commit(root: Path) -> None:
-    actual = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+    marker = root / ".dxweaver-upstream-revision"
+    if marker.is_file():
+        actual = marker.read_text(encoding="utf-8").strip()
+    elif (root / ".git").exists():
+        actual = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+    else:
+        raise RuntimeError("cannot verify MSHV revision: no git metadata or revision marker")
     if actual != PINNED_UPSTREAM:
         raise RuntimeError(f"unexpected MSHV commit {actual}; expected {PINNED_UPSTREAM}")
 
