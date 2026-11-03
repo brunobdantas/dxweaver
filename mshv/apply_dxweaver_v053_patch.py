@@ -104,6 +104,18 @@ def refresh_to_pinned_upstream(root: Path) -> None:
                 shutil.copy2(child, dst)
 
         (root / ".dxweaver-upstream-revision").write_text(PINNED_UPSTREAM, encoding="utf-8")
+
+        # The surrounding legacy workflow initialized Git from a 2.76.7
+        # snapshot. Commit the freshly downloaded 2.76.8 tree as the local
+        # baseline so its own historical whitespace is not attributed to the
+        # Enhanced patch by the subsequent git diff --check.
+        subprocess.check_call(["git", "-C", str(root), "add", "-A"])
+        subprocess.check_call([
+            "git", "-C", str(root),
+            "-c", "user.name=MSHV Enhanced CI",
+            "-c", "user.email=ci@mshv-enhanced.invalid",
+            "commit", "-m", "CI baseline: official MSHV 2.76.8 rc008"
+        ])
         print("refreshed working tree to pinned MSHV 2.76.8 rc008")
 
 
